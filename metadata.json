@@ -1,0 +1,6 @@
+{
+  "name": "シネマティックスライドショー",
+  "description": "写真を取り込むだけで紀行ドキュメンタリー映画のような演出を施して自動再生するWeb型シネマティックスライドショーアプリ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

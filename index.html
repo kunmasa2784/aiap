@@ -1,0 +1,2625 @@
+<!doctype html>
+<html lang="ja" class="h-full bg-black text-white">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>シネマティックスライドショー</title>
+    <meta name="description" content="写真を取り込むだけで映画（紀行ドキュメンタリー番組）のような演出を施して自動再生するWeb型シネマティックスライドショーアプリ" />
+    <meta property="og:title" content="シネマティックスライドショー" />
+    <meta property="og:description" content="写真を取り込むだけで映画（紀行ドキュメンタリー番組）のような演出を施して自動再生するWeb型シネマティックスライドショーアプリ" />
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Noto+Serif+JP:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              cinzel: ['Cinzel', 'serif'],
+              serif: ['"Noto Serif JP"', 'serif'],
+              sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            },
+            colors: {
+              cinema: {
+                950: '#050505',
+                900: '#0A0A0A',
+                850: '#0C0C0D',
+                800: '#141416',
+                700: '#1E1E24',
+                gold: '#f59e0b',
+                accent: '#d97706'
+              }
+            }
+          }
+        }
+      }
+    </script>
+
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Tone.js CDN for procedural BGM generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+    <style>
+      /* Ken Burns Animations */
+      @keyframes kb-zoom-in {
+        0% { transform: scale(1.0) translate(0%, 0%); }
+        100% { transform: scale(1.18) translate(-1.5%, -1%); }
+      }
+      @keyframes kb-zoom-out {
+        0% { transform: scale(1.18) translate(-1.5%, -1%); }
+        100% { transform: scale(1.0) translate(0%, 0%); }
+      }
+      @keyframes kb-pan-left {
+        0% { transform: scale(1.12) translate(3%, 0%); }
+        100% { transform: scale(1.12) translate(-3%, 0%); }
+      }
+      @keyframes kb-pan-right {
+        0% { transform: scale(1.12) translate(-3%, 0%); }
+        100% { transform: scale(1.12) translate(3%, 0%); }
+      }
+      @keyframes kb-tilt-up {
+        0% { transform: scale(1.12) translate(0%, 2.5%); }
+        100% { transform: scale(1.12) translate(0%, -2.5%); }
+      }
+      @keyframes kb-tilt-down {
+        0% { transform: scale(1.12) translate(0%, -2.5%); }
+        100% { transform: scale(1.12) translate(0%, 2.5%); }
+      }
+
+      .anim-zoom-in { animation: kb-zoom-in var(--slide-duration, 8s) cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+      .anim-zoom-out { animation: kb-zoom-out var(--slide-duration, 8s) cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+      .anim-pan-left { animation: kb-pan-left var(--slide-duration, 8s) linear forwards; }
+      .anim-pan-right { animation: kb-pan-right var(--slide-duration, 8s) linear forwards; }
+      .anim-tilt-up { animation: kb-tilt-up var(--slide-duration, 8s) linear forwards; }
+      .anim-tilt-down { animation: kb-tilt-down var(--slide-duration, 8s) linear forwards; }
+
+      /* Subtitle text shadow for film aesthetic */
+      .cinematic-text {
+        text-shadow: 0 2px 4px rgba(0,0,0,0.9), 0 0 16px rgba(0,0,0,0.85);
+      }
+      
+      /* Vignette overlay */
+      .vignette-effect {
+        box-shadow: inset 0 0 120px 40px rgba(0, 0, 0, 0.85);
+      }
+
+      /* Custom scrollbars */
+      ::-webkit-scrollbar { height: 4px; width: 4px; }
+      ::-webkit-scrollbar-track { background: #08080a; }
+      ::-webkit-scrollbar-thumb { background: #202028; border-radius: 2px; }
+      ::-webkit-scrollbar-thumb:hover { background: #353542; }
+
+      /* Theater Fullscreen Styles */
+      #stageContainer.theater-fullscreen {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        z-index: 9999 !important;
+        background: #000 !important;
+      }
+      body.theater-active {
+        overflow: hidden !important;
+      }
+    </style>
+  </head>
+  <body class="h-full flex flex-col bg-[#050505] text-[#E5E5E5] font-sans select-none overflow-hidden">
+
+    <!-- Top Navigation / Header -->
+    <header id="appHeader" class="h-12 border-b border-white/10 flex items-center justify-between px-4 sm:px-6 bg-[#0A0A0A] shrink-0 z-30">
+      <div class="flex items-center gap-3">
+        <div class="w-6 h-6 bg-amber-500 rounded-sm flex items-center justify-center text-black font-black text-xs italic">C</div>
+        <h1 class="text-xs font-bold tracking-[0.2em] uppercase text-white/80 flex items-center">
+          Cinema Scribe
+          <span class="font-light text-white/40 font-serif lowercase italic ml-1.5">v2.4</span>
+        </h1>
+      </div>
+
+      <!-- Quick Action Buttons & Project Status -->
+      <div class="flex items-center gap-2 sm:gap-4 text-xs">
+        <div class="hidden lg:flex items-center gap-2 text-[10px] uppercase tracking-widest text-white/50">
+          <span class="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span>
+          <span>Project: Documentary</span>
+        </div>
+
+        <button id="btnLoadSample" class="px-2.5 sm:px-3 py-1 bg-white/5 border border-white/10 text-[10px] uppercase tracking-widest text-white/80 hover:bg-white/10 hover:text-white transition-colors rounded-sm flex items-center gap-1.5" title="美しいサンプル写真5枚を読み込む">
+          <i data-lucide="sparkles" class="w-3 h-3 text-amber-500"></i>
+          <span>サンプル読込</span>
+        </button>
+
+        <label for="fileInput" class="px-2.5 sm:px-3 py-1 bg-white/5 border border-white/10 text-[10px] uppercase tracking-widest text-white/80 hover:bg-white/10 hover:text-white cursor-pointer transition-colors rounded-sm flex items-center gap-1.5" title="写真を追加 (複数選択・DnD可)">
+          <i data-lucide="image-plus" class="w-3 h-3 text-emerald-400"></i>
+          <span>写真追加</span>
+          <input type="file" id="fileInput" multiple accept="image/*" class="hidden">
+        </label>
+
+        <button id="btnAiAnalyzeAll" class="px-2.5 sm:px-3 py-1 bg-amber-500/15 border border-amber-500/30 text-[10px] uppercase tracking-widest text-amber-300 hover:bg-amber-500/25 transition-colors rounded-sm flex items-center gap-1.5" title="Gemini AIまたは自動構成エンジンで全台本・字幕を生成">
+          <i data-lucide="wand-2" class="w-3 h-3 text-amber-400"></i>
+          <span class="hidden sm:inline">AI台本自動生成</span>
+        </button>
+
+        <div class="h-3.5 w-px bg-white/10 mx-0.5"></div>
+
+        <button id="btnExportProject" class="px-2.5 sm:px-3 py-1 bg-white/5 border border-white/10 text-[10px] uppercase tracking-widest text-white/80 hover:bg-white/10 hover:text-white transition-colors rounded-sm flex items-center gap-1" title="プロジェクト保存 (.cinematic)">
+          <i data-lucide="download" class="w-3 h-3 text-amber-400"></i>
+          <span>プロジェクト保存</span>
+        </button>
+        <label for="projectInput" class="p-1 rounded-sm text-white/40 hover:text-white hover:bg-white/5 cursor-pointer transition" title="プロジェクト読込 (.cinematic)">
+          <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+          <input type="file" id="projectInput" accept=".cinematic,.json" class="hidden">
+        </label>
+
+        <button id="btnFullscreen" class="px-2.5 sm:px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[10px] uppercase tracking-wider text-amber-300 hover:text-amber-200 transition-colors rounded-sm flex items-center gap-1.5 font-semibold cursor-pointer shadow-sm" title="全画面シアター上映 (Fキー)">
+          <i data-lucide="maximize" class="w-3.5 h-3.5 text-amber-400"></i>
+          <span>全画面シアター</span>
+          <kbd class="text-[9px] bg-amber-500/20 px-1 py-0.5 rounded font-mono text-amber-200 leading-none">F</kbd>
+        </button>
+
+        <button id="btnToggleSidebar" class="px-2.5 py-1 bg-white/5 border border-white/10 text-[10px] uppercase tracking-widest text-white/80 hover:bg-white/10 hover:text-white rounded-sm ml-1 transition flex items-center gap-1">
+          <i data-lucide="sliders-horizontal" class="w-3 h-3 text-amber-500"></i>
+          <span class="hidden md:inline">演出・台本</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Area: Stage + Sidebar -->
+    <div class="flex-1 flex relative overflow-hidden bg-[#050505]">
+      
+      <!-- Center: Cinematic Viewport Stage -->
+      <main id="stageContainer" class="flex-1 flex flex-col justify-center items-center relative bg-black overflow-hidden select-none">
+        
+        <!-- Drag and Drop overlay indicator -->
+        <div id="dndDropzone" class="absolute inset-0 z-50 bg-amber-500/10 border-2 border-dashed border-amber-500/70 backdrop-blur-sm flex flex-col items-center justify-center pointer-events-none transition-opacity duration-200 opacity-0">
+          <i data-lucide="upload-cloud" class="w-12 h-12 text-amber-400 animate-bounce mb-3"></i>
+          <p class="text-lg font-serif text-white font-semibold">写真をドロップして追加</p>
+          <p class="text-xs text-white/60 mt-1 uppercase tracking-widest">タイムラインに画像を取り込みます</p>
+        </div>
+
+        <!-- Cinema Screen Box (Adjustable Aspect Ratio / Letterbox) -->
+        <div id="cinemaViewport" class="relative w-full h-full flex items-center justify-center bg-black overflow-hidden">
+          
+          <!-- Top CinemaScope Letterbox Bar -->
+          <div id="letterboxTop" class="absolute top-0 left-0 right-0 z-20 bg-black pointer-events-none transition-all duration-500 h-8 sm:h-12 border-b border-white/5 flex items-center justify-center">
+            <div class="text-[10px] text-white/30 uppercase tracking-[0.4em] font-serif">シネマスコープ (2.39:1)</div>
+          </div>
+          
+          <!-- Image Projection Canvas Container -->
+          <div id="screenStage" class="relative w-full h-full flex items-center justify-center overflow-hidden bg-black">
+            
+            <!-- Slide Image Layer 1 (Active) -->
+            <img id="slideImgA" src="" alt="Cinematic Stage" class="absolute inset-0 w-full h-full object-cover opacity-0 transition-opacity duration-1000 ease-in-out pointer-events-none">
+            
+            <!-- Slide Image Layer 2 (Transition buffer) -->
+            <img id="slideImgB" src="" alt="Cinematic Stage Buffer" class="absolute inset-0 w-full h-full object-cover opacity-0 transition-opacity duration-1000 ease-in-out pointer-events-none">
+
+            <!-- Vignette Layer -->
+            <div id="vignetteOverlay" class="absolute inset-0 pointer-events-none vignette-effect z-10"></div>
+
+            <!-- Light Leak FX Layer -->
+            <div id="lightLeakOverlay" class="absolute inset-0 pointer-events-none z-10 mix-blend-screen opacity-0 transition-opacity duration-1000 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-amber-400/40 via-rose-500/20 to-transparent"></div>
+
+            <!-- Canvas for Film Grain & Floating Dust Particles -->
+            <canvas id="fxCanvas" class="absolute inset-0 w-full h-full pointer-events-none z-15"></canvas>
+
+            <!-- Slide Opening Title (Card at slide beginning) -->
+            <div id="slideTitleCard" class="absolute top-14 sm:top-18 left-6 sm:left-12 z-20 pointer-events-none opacity-0 transition-opacity duration-1000 max-w-xl">
+              <div class="w-16 h-1 bg-amber-500/40 mb-3"></div>
+              <h2 id="slideTitleText" class="text-white/60 uppercase tracking-[0.4em] text-xs sm:text-sm font-semibold cinematic-text"></h2>
+              <p id="slideLocationText" class="text-[10px] text-amber-500/80 font-mono tracking-widest mt-1.5 uppercase italic"></p>
+            </div>
+
+            <!-- Documentary Subtitle / Narration Bar (Bottom center) -->
+            <div id="subtitleContainer" class="absolute bottom-12 sm:bottom-16 left-6 right-6 sm:left-16 sm:right-16 z-20 flex flex-col items-center text-center pointer-events-none">
+              <div class="transition-all duration-700 opacity-0 translate-y-2 max-w-3xl flex flex-col items-center" id="subtitleBox">
+                <p id="subtitleText" class="text-white font-serif text-base sm:text-lg tracking-wide drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] px-4 sm:px-12 italic cinematic-text leading-relaxed"></p>
+                <!-- Active Narration Badge -->
+                <div id="narrationActiveBadge" class="hidden items-center gap-1.5 px-2.5 py-0.5 mt-2 rounded-full bg-black/70 border border-amber-500/30 text-amber-300 text-[10px] font-mono shadow-md backdrop-blur-sm pointer-events-none">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                  <span id="narrationActiveText">Gemini Flash AI 朗読中</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Empty State Prompt -->
+            <div id="emptyStatePrompt" class="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center">
+              <div class="w-14 h-14 rounded-sm bg-[#111] border border-white/10 flex items-center justify-center text-amber-500 mb-4 shadow-2xl">
+                <i data-lucide="film" class="w-7 h-7"></i>
+              </div>
+              <h3 class="text-lg font-serif font-semibold text-white/90 mb-2">写真を読み込んで映画をはじめましょう</h3>
+              <p class="text-xs text-white/40 max-w-md mb-6 leading-relaxed">
+                写真を取り込むと、Ken Burnsエフェクト、フィルム粒子、光漏れ、アンビエントBGM、AIナレーションが自動で連動し、情緒あふれる紀行ドキュメンタリーが再生されます。
+              </p>
+              <div class="flex items-center gap-3">
+                <button id="btnEmptyLoadSample" class="px-4 py-2 rounded-sm bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs tracking-widest uppercase transition shadow-lg flex items-center gap-2 cursor-pointer">
+                  <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                  サンプル旅写真で体験
+                </button>
+                <label for="emptyFileInput" class="px-4 py-2 rounded-sm bg-white/5 hover:bg-white/10 text-white/80 border border-white/10 font-semibold text-xs tracking-widest uppercase transition cursor-pointer flex items-center gap-2">
+                  <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+                  写真を選択
+                  <input type="file" id="emptyFileInput" multiple accept="image/*" class="hidden">
+                </label>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Bottom CinemaScope Letterbox Bar -->
+          <div id="letterboxBottom" class="absolute bottom-0 left-0 right-0 z-20 bg-black pointer-events-none transition-all duration-500 h-8 sm:h-12 border-t border-white/5 flex items-center justify-center"></div>
+        </div>
+
+        <!-- Floating Stage Fullscreen Trigger (Top Right on Stage) -->
+        <div class="absolute top-4 right-4 z-35 flex items-center gap-2">
+          <button id="btnStageFullscreen" class="px-3 py-1.5 rounded-sm bg-black/80 hover:bg-amber-500 hover:text-black text-white/90 border border-white/20 text-xs font-medium flex items-center gap-1.5 transition backdrop-blur-md shadow-xl cursor-pointer" title="全画面シアター表示 (Fキーまたはダブルクリック)">
+            <i data-lucide="maximize-2" class="w-3.5 h-3.5"></i>
+            <span>全画面 (F)</span>
+          </button>
+        </div>
+
+        <!-- Theater Mode Exit Hint / Fullscreen Exit -->
+        <button id="btnExitTheater" class="fixed top-5 right-6 z-60 bg-black/90 hover:bg-amber-500 hover:text-black text-white/90 border border-white/20 px-4 py-2 rounded-full text-xs font-semibold uppercase tracking-wider backdrop-blur-md shadow-2xl hidden items-center gap-2 transition cursor-pointer">
+          <i data-lucide="minimize-2" class="w-4 h-4"></i>
+          <span>全画面解除 (Esc / F)</span>
+        </button>
+
+        <!-- Theater HUD (Bottom Floating Auto-Hiding Controller) -->
+        <div id="theaterHud" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-60 bg-[#0A0A0A]/95 border border-white/20 backdrop-blur-md px-5 py-2.5 rounded-full hidden items-center gap-4 text-white text-xs shadow-2xl transition-opacity duration-300 pointer-events-auto">
+          <button id="btnTheaterPrev" class="text-white/60 hover:text-white transition p-1 cursor-pointer" title="前へ">
+            <i data-lucide="skip-back" class="w-4 h-4"></i>
+          </button>
+          <button id="btnTheaterPlayPause" class="w-8 h-8 rounded-full bg-amber-500 hover:bg-amber-400 text-black flex items-center justify-center transition shadow font-bold cursor-pointer" title="再生 / 一時停止 (Space)">
+            <i data-lucide="play" class="w-4 h-4 fill-current ml-0.5" id="theaterPlayIcon"></i>
+          </button>
+          <button id="btnTheaterStop" class="w-8 h-8 rounded-full bg-white/10 hover:bg-red-950/60 hover:text-red-400 text-white/70 flex items-center justify-center transition border border-white/15 cursor-pointer" title="停止・リセット (Sキー)">
+            <i data-lucide="square" class="w-3.5 h-3.5 fill-current"></i>
+          </button>
+          <button id="btnTheaterNext" class="text-white/60 hover:text-white transition p-1 cursor-pointer" title="次へ">
+            <i data-lucide="skip-forward" class="w-4 h-4"></i>
+          </button>
+          <div class="h-4 w-px bg-white/20"></div>
+          <span id="theaterTitle" class="text-white/90 font-serif text-xs truncate max-w-[180px] sm:max-w-xs"></span>
+          <span id="theaterTimecode" class="font-mono text-[11px] text-amber-400/90">00:00 / 00:00</span>
+          <div class="h-4 w-px bg-white/20"></div>
+          <button id="btnTheaterExit" class="text-white/60 hover:text-amber-400 transition flex items-center gap-1 text-[10px] uppercase font-mono cursor-pointer" title="全画面解除">
+            <i data-lucide="minimize-2" class="w-3.5 h-3.5"></i>
+            <span>全画面解除</span>
+          </button>
+        </div>
+
+      </main>
+
+      <!-- Right Drawer / Sidebar (Settings & Slide Editor) -->
+      <aside id="sidebar" class="w-72 sm:w-80 bg-[#0C0C0D] border-l border-white/5 flex flex-col z-30 transition-all duration-300 translate-x-0 shrink-0">
+        
+        <!-- Sidebar Tabs -->
+        <div class="h-11 border-b border-white/5 flex items-center justify-between px-3 bg-[#0A0A0A] shrink-0">
+          <div class="flex items-center gap-1.5">
+            <button id="tabBtnSlide" class="px-2.5 py-1 text-[10px] uppercase tracking-wider rounded-sm font-semibold transition bg-white/10 text-amber-400 border border-white/20">台本エディタ</button>
+            <button id="tabBtnFX" class="px-2.5 py-1 text-[10px] uppercase tracking-wider rounded-sm font-semibold transition text-white/40 hover:text-white/80 border border-transparent">演出・音楽</button>
+            <button id="tabBtnAI" class="px-2.5 py-1 text-[10px] uppercase tracking-wider rounded-sm font-semibold transition text-white/40 hover:text-white/80 border border-transparent">AI自動生成</button>
+          </div>
+          <button id="btnCloseSidebar" class="p-1 text-white/40 hover:text-white rounded-sm hover:bg-white/5 transition" title="閉じる">
+            <i data-lucide="x" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+
+        <!-- Tab 1: Slide Content & Script Editor -->
+        <div id="tabContentSlide" class="flex-1 overflow-y-auto p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-[10px] uppercase tracking-[0.2em] font-bold text-amber-500/80 flex items-center gap-1.5">
+              <i data-lucide="edit-3" class="w-3 h-3 text-amber-500"></i>
+              スライド台本エディタ
+            </h2>
+            <span id="currentSlideIndicator" class="text-[9px] font-mono text-amber-500/70 bg-white/5 px-2 py-0.5 rounded-sm border border-white/10">1 / 5</span>
+          </div>
+
+          <!-- Current Slide Preview Thumbnail -->
+          <div class="relative w-full aspect-video bg-[#111] rounded-sm overflow-hidden border border-white/10">
+            <img id="editThumb" src="" alt="Thumbnail" class="w-full h-full object-cover">
+            <div class="absolute bottom-1 right-1.5 text-[9px] font-mono bg-black/80 px-1 py-0.5 rounded-sm text-white/60" id="editDurationBadge">8.0s</div>
+          </div>
+
+          <!-- Title Input -->
+          <div>
+            <label class="block text-[9px] uppercase tracking-widest text-white/50 mb-1.5">シーンタイトル・撮影地</label>
+            <input type="text" id="editTitle" class="w-full bg-[#141416] border border-white/10 rounded-sm px-2.5 py-1.5 text-xs text-white/80 focus:outline-none focus:border-amber-500/50 transition" placeholder="例: 悠久の古都 - 京都 嵐山">
+          </div>
+
+          <!-- Subtitle Input -->
+          <div>
+            <label class="block text-[9px] uppercase tracking-widest text-white/50 mb-1.5">シネマ字幕（1文）</label>
+            <input type="text" id="editSubtitle" class="w-full bg-[#141416] border border-white/10 rounded-sm px-2.5 py-1.5 text-xs text-white/80 focus:outline-none focus:border-amber-500/50 transition" placeholder="例: 風が笹を揺らし、木漏れ日が小径を照らす。">
+          </div>
+
+          <!-- Narration Script Input -->
+          <div class="bg-white/5 border border-white/10 p-3 rounded-sm space-y-2">
+            <div class="flex justify-between items-center">
+              <span class="text-[9px] uppercase tracking-widest text-white/60 font-semibold">ナレーション朗読原稿</span>
+              <button id="btnPreviewSpeech" class="text-[9px] uppercase tracking-widest text-amber-400 hover:underline flex items-center gap-1 cursor-pointer">
+                <i data-lucide="volume-2" class="w-2.5 h-2.5"></i> 試聴
+              </button>
+            </div>
+            <textarea id="editScript" rows="3" class="w-full bg-transparent text-xs text-white/80 border-none focus:ring-0 p-0 resize-none leading-relaxed focus:outline-none" placeholder="ナレーション音声として読み上げる情緒的な台本（目安：10秒前後 / 40〜48文字）"></textarea>
+            <div class="flex justify-between items-center text-[8px] pt-1 border-t border-white/5">
+              <span class="text-white/40">目安: 10秒前後 (約40〜48文字)</span>
+              <span id="editScriptCounter" class="font-mono text-emerald-400 font-medium">0文字 (約0秒)</span>
+            </div>
+          </div>
+
+          <!-- Duration & Ken Burns Motion -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <div class="flex justify-between items-center mb-1">
+                <label class="text-[9px] uppercase tracking-widest text-white/50">個別表示時間</label>
+                <span id="valDurationText" class="text-amber-400 font-mono text-[10px] font-semibold">10秒</span>
+              </div>
+              <input type="range" id="editDuration" min="2" max="20" step="1" value="10" class="w-full accent-amber-500 cursor-pointer">
+              <span class="text-[8px] text-white/30 block mt-0.5 leading-tight">※朗読が長い場合は自動延長</span>
+            </div>
+            <div>
+              <label class="block text-[9px] uppercase tracking-widest text-white/50 mb-1.5">カメラワーク（動き）</label>
+              <select id="editMotion" class="w-full bg-[#141416] border border-white/10 rounded-sm px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-amber-500/50">
+                <option value="random">自動（ランダム）</option>
+                <option value="zoom-in">ズームイン（寄り）</option>
+                <option value="zoom-out">ズームアウト（引き）</option>
+                <option value="pan-left">左へパン（横移動）</option>
+                <option value="pan-right">右へパン（横移動）</option>
+                <option value="tilt-up">上へチルト（縦移動）</option>
+                <option value="tilt-down">下へチルト（縦移動）</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Transition Type -->
+          <div>
+            <label class="block text-[9px] uppercase tracking-widest text-white/50 mb-1.5">画面切り替え（トランジション）</label>
+            <select id="editTransition" class="w-full bg-[#141416] border border-white/10 rounded-sm px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-amber-500/50">
+              <option value="crossfade">映画風クロスフェード</option>
+              <option value="deep-black">ディープブラック暗転</option>
+            </select>
+          </div>
+
+          <!-- Slide Actions -->
+          <div class="flex items-center gap-2 pt-2 border-t border-white/5">
+            <button id="btnAiAnalyzeCurrent" class="flex-1 py-1.5 px-3 rounded-sm bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[10px] uppercase tracking-widest flex items-center justify-center gap-1.5 transition cursor-pointer">
+              <i data-lucide="sparkles" class="w-3 h-3 text-amber-400"></i>
+              <span>AI台本解析</span>
+            </button>
+            <button id="btnDeleteSlide" class="p-1.5 rounded-sm bg-white/5 hover:bg-red-950/40 text-white/40 hover:text-red-400 border border-white/10 text-xs transition cursor-pointer" title="スライド削除">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Tab 2: FX & Audio Settings -->
+        <div id="tabContentFX" class="flex-1 overflow-y-auto p-4 space-y-4 hidden">
+          
+          <!-- Slide Duration & Timing Section -->
+          <div>
+            <h2 class="text-[10px] uppercase tracking-[0.2em] font-bold text-amber-500/80 mb-3 flex items-center gap-1.5">
+              <i data-lucide="clock" class="w-3 h-3 text-amber-500"></i>
+              スライド基本時間設定
+            </h2>
+            
+            <div class="space-y-3 bg-white/5 p-3 rounded-sm border border-white/10">
+              <div>
+                <div class="flex justify-between items-center mb-1">
+                  <span class="text-white/80 font-medium text-[10px]">スライド基本表示時間</span>
+                  <span id="valGlobalDuration" class="text-amber-400 font-mono text-[11px] font-bold">10秒</span>
+                </div>
+                <input type="range" id="sliderGlobalDuration" min="2" max="20" step="1" value="10" class="w-full accent-amber-500 cursor-pointer">
+                <div class="flex justify-between text-[8px] font-mono text-white/30 mt-0.5">
+                  <span>2秒 (速め)</span>
+                  <span>10秒 (標準)</span>
+                  <span>20秒 (ゆったり)</span>
+                </div>
+              </div>
+
+              <!-- Narration Auto-Extension Explanatory Box -->
+              <div class="bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-sm text-[9px] text-amber-200/90 leading-relaxed space-y-1">
+                <div class="flex items-center gap-1 font-semibold text-amber-300">
+                  <i data-lucide="sparkles" class="w-2.5 h-2.5"></i>
+                  <span>ナレーション自動延長機能</span>
+                </div>
+                <p class="text-white/70">
+                  ナレーション読み上げ時間が基本設定時間より長い場合は、音声が途切れないようスライド表示時間を自動で延長します。短い場合は設定時間がそのまま維持されます。
+                </p>
+              </div>
+
+              <button id="btnApplyDurationToAll" class="w-full py-1.5 px-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white rounded-sm text-[10px] tracking-wider flex items-center justify-center gap-1.5 transition cursor-pointer">
+                <i data-lucide="check-check" class="w-3 h-3 text-amber-400"></i>
+                <span>この時間を全スライドに一括適用</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Visual Effects Section -->
+          <div>
+            <h2 class="text-[10px] uppercase tracking-[0.2em] font-bold text-amber-500/80 mb-3 flex items-center gap-1.5">
+              <i data-lucide="sparkles" class="w-3 h-3 text-amber-500"></i>
+              映像演出・空気感
+            </h2>
+            
+            <div class="space-y-3 bg-white/5 p-3 rounded-sm border border-white/10">
+              <div>
+                <div class="flex justify-between text-[10px] mb-1">
+                  <span class="text-white/60 uppercase tracking-widest text-[9px]">フィルム粒子（粒状感）</span>
+                  <span id="valGrain" class="text-amber-400 font-mono text-[9px]">15%</span>
+                </div>
+                <input type="range" id="sliderGrain" min="0" max="60" value="15" class="w-full accent-amber-500 cursor-pointer">
+              </div>
+
+              <div>
+                <div class="flex justify-between text-[10px] mb-1">
+                  <span class="text-white/60 uppercase tracking-widest text-[9px]">浮遊光粒子（ダスト）</span>
+                  <span id="valDust" class="text-amber-400 font-mono text-[9px]">ON (30)</span>
+                </div>
+                <input type="range" id="sliderDust" min="0" max="60" value="30" class="w-full accent-amber-500 cursor-pointer">
+              </div>
+
+              <div>
+                <div class="flex justify-between text-[10px] mb-1">
+                  <span class="text-white/60 uppercase tracking-widest text-[9px]">周辺減光（ビネット）</span>
+                  <span id="valVignette" class="text-amber-400 font-mono text-[9px]">60%</span>
+                </div>
+                <input type="range" id="sliderVignette" min="0" max="100" value="60" class="w-full accent-amber-500 cursor-pointer">
+              </div>
+
+              <div class="flex items-center justify-between text-xs pt-1 border-t border-white/5">
+                <span class="text-white/60 uppercase tracking-widest text-[9px]">レンズフレア・光漏れ演出</span>
+                <input type="checkbox" id="checkLightLeak" checked class="accent-amber-500 w-3.5 h-3.5 cursor-pointer">
+              </div>
+
+              <div class="pt-1">
+                <label class="block text-[9px] uppercase tracking-widest text-white/50 mb-1.5">アスペクト比（画面比率）</label>
+                <select id="selectAspect" class="w-full bg-[#141416] border border-white/10 rounded-sm px-2 py-1.5 text-[11px] text-white/80">
+                  <option value="cinemascope">シネマスコープ (2.39:1)</option>
+                  <option value="classic169">標準ワイド (16:9)</option>
+                  <option value="fullscreen">全画面フィット</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Music & Speech Section -->
+          <div>
+            <h2 class="text-[10px] uppercase tracking-[0.2em] font-bold text-amber-500/80 mb-3 flex items-center gap-1.5">
+              <i data-lucide="music" class="w-3 h-3 text-amber-500"></i>
+              音楽・音響設定
+            </h2>
+
+            <div class="space-y-3 bg-white/5 p-3 rounded-sm border border-white/10">
+              <div>
+                <label class="block text-[9px] uppercase tracking-widest text-white/50 mb-1.5">BGM楽曲スタイル</label>
+                <select id="selectBgmStyle" class="w-full bg-[#141416] border border-white/10 rounded-sm px-2 py-1.5 text-[11px] text-white/80">
+                  <option value="piano">静寂のピアノ（癒やし）</option>
+                  <option value="ambient">深遠なアンビエントパッド</option>
+                  <option value="musicbox">オルゴールベル（郷愁）</option>
+                  <option value="strings">シネマティック弦楽（壮大）</option>
+                </select>
+              </div>
+
+              <div>
+                <div class="flex justify-between text-[10px] mb-1">
+                  <span class="text-white/60 uppercase tracking-widest text-[9px]">BGM音量</span>
+                  <span id="valBgmVolume" class="text-amber-400 font-mono text-[9px]">70%</span>
+                </div>
+                <input type="range" id="sliderBgmVolume" min="0" max="100" value="70" class="w-full accent-amber-500 cursor-pointer">
+              </div>
+
+              <div class="pt-2 border-t border-white/5 space-y-3">
+                <div class="flex items-center justify-between text-xs">
+                  <div>
+                    <span class="text-white/80 uppercase tracking-widest text-[9px] block font-semibold">自動ナレーション朗読</span>
+                    <span class="text-[8px] text-white/40">スライドごとに情緒的な台本を音声化</span>
+                  </div>
+                  <input type="checkbox" id="checkNarration" checked class="accent-amber-500 w-3.5 h-3.5 cursor-pointer">
+                </div>
+
+                <div class="flex items-center justify-between text-xs">
+                  <div>
+                    <span class="text-white/60 uppercase tracking-widest text-[9px] block">自動BGM減音（ダッキング）</span>
+                    <span class="text-[8px] text-white/30">朗読中にBGM音量を自動減衰</span>
+                  </div>
+                  <input type="checkbox" id="checkDucking" checked class="accent-amber-500 w-3.5 h-3.5 cursor-pointer">
+                </div>
+
+                <div>
+                  <label class="block text-[9px] uppercase tracking-widest text-white/50 mb-1.5">ナレーション音声エンジン</label>
+                  <select id="selectVoiceEngine" class="w-full bg-[#141416] border border-amber-500/30 rounded-sm px-2 py-1.5 text-[11px] text-amber-300 font-medium">
+                    <option value="gemini" selected>✨ Gemini Flash AI 自然朗読 (推奨・紀行映画品質)</option>
+                    <option value="webspeech">🌐 ブラウザ内蔵音声 (Web Speech)</option>
+                  </select>
+                </div>
+
+                <!-- Gemini Flash Voices Config -->
+                <div id="geminiVoiceSection" class="space-y-2 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-sm">
+                  <div>
+                    <div class="flex justify-between items-center mb-1">
+                      <label class="text-[9px] uppercase tracking-widest text-amber-300/90 font-semibold">Gemini ナレーター</label>
+                      <span class="text-[8px] font-mono text-emerald-400 flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        24kHz Hi-Fi
+                      </span>
+                    </div>
+                    <select id="selectGeminiVoice" class="w-full bg-[#141416] border border-white/15 rounded-sm px-2 py-1.5 text-[11px] text-white/90 focus:border-amber-500/50">
+                      <option value="Aoede" selected>Aoede（優美・穏やかな女性 / 情緒紀行に最適）</option>
+                      <option value="Charon">Charon（重厚・深みのある男性 / 映画風ナレーション）</option>
+                      <option value="Kore">Kore（温かく澄んだ女性 / 心温まる旅の語り）</option>
+                      <option value="Fenrir">Fenrir（凛とした明瞭な男性 / ドキュメンタリー）</option>
+                      <option value="Puck">Puck（自然体で親しみやすい語り口）</option>
+                    </select>
+                  </div>
+
+                  <button id="btnTestVoice" class="w-full py-1.5 px-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded-sm text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition cursor-pointer font-medium">
+                    <i data-lucide="volume-2" class="w-3 h-3"></i>
+                    <span id="btnTestVoiceText">ナレーター音声を試聴</span>
+                  </button>
+                </div>
+
+                <!-- WebSpeech Fallback Voice Config -->
+                <div id="webSpeechVoiceSection" class="hidden space-y-1.5">
+                  <label class="block text-[9px] uppercase tracking-widest text-white/50">ブラウザ内蔵音声</label>
+                  <select id="selectVoice" class="w-full bg-[#141416] border border-white/10 rounded-sm px-2 py-1.5 text-[11px] text-white/80"></select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <div class="flex justify-between text-[8px] uppercase tracking-widest text-white/50 mb-0.5">
+                      <span>再生速度</span>
+                      <span id="valVoiceRate" class="text-amber-400 font-mono">1.0x</span>
+                    </div>
+                    <input type="range" id="sliderVoiceRate" min="0.8" max="1.2" step="0.05" value="1.0" class="w-full accent-amber-500 cursor-pointer">
+                  </div>
+                  <div>
+                    <div class="flex justify-between text-[8px] uppercase tracking-widest text-white/50 mb-0.5">
+                      <span>ピッチ</span>
+                      <span id="valVoicePitch" class="text-amber-400 font-mono">1.0</span>
+                    </div>
+                    <input type="range" id="sliderVoicePitch" min="0.8" max="1.2" step="0.05" value="1.0" class="w-full accent-amber-500 cursor-pointer">
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Tab 3: Gemini AI & Project Config -->
+        <div id="tabContentAI" class="flex-1 overflow-y-auto p-4 space-y-4 hidden">
+          <div class="flex items-center gap-2">
+            <i data-lucide="cpu" class="w-3.5 h-3.5 text-amber-500"></i>
+            <h2 class="text-[10px] uppercase tracking-[0.2em] font-bold text-amber-500/80">AI自動生成スタジオ (Gemini)</h2>
+          </div>
+
+          <div class="bg-amber-500/10 border border-amber-500/20 rounded-sm p-3 text-xs text-amber-200/90 leading-relaxed">
+            写真をGeminiのVisionで解析し、各スライド約10秒の心地よいテンポに合わせた「タイトル」「字幕」「ドキュメンタリー朗読台本」を自動執筆します。
+          </div>
+
+          <div>
+            <label class="block text-[9px] uppercase tracking-widest text-white/50 mb-1.5">Gemini APIキー (任意)</label>
+            <input type="password" id="geminiApiKey" class="w-full bg-[#141416] border border-white/10 rounded-sm px-2.5 py-1.5 text-xs text-white/80 focus:outline-none focus:border-amber-500/50 transition" placeholder="APIキーを入力 (空でも内蔵エンジン作動)">
+            <p class="text-[9px] text-white/30 mt-1">※ 未入力時は内蔵の詩的トラベル台本エンジンが自動動作します。</p>
+          </div>
+
+          <div>
+            <button id="btnAiBatchRun" class="w-full py-2 px-3 rounded-sm bg-amber-500 hover:bg-amber-400 text-black font-semibold text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition shadow cursor-pointer">
+              <i data-lucide="wand-2" class="w-3 h-3"></i>
+              全スライド一括AI解析・台本執筆
+            </button>
+          </div>
+
+          <div class="pt-4 border-t border-white/5 space-y-2">
+            <span class="text-[9px] uppercase tracking-widest text-white/50 block">プロジェクト管理</span>
+            
+            <button id="btnSaveCinematic" class="w-full py-1.5 px-3 rounded-sm bg-white/5 hover:bg-white/10 text-white/80 border border-white/10 text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition cursor-pointer">
+              <i data-lucide="download" class="w-3 h-3 text-amber-400"></i>
+              プロジェクト書き出し (.cinematic)
+            </button>
+
+            <label for="projectInputTab" class="w-full py-1.5 px-3 rounded-sm bg-white/5 hover:bg-white/10 text-white/80 border border-white/10 text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition cursor-pointer">
+              <i data-lucide="upload" class="w-3 h-3 text-white/60"></i>
+              プロジェクト読み込み (.cinematic)
+              <input type="file" id="projectInputTab" accept=".cinematic,.json" class="hidden">
+            </label>
+          </div>
+        </div>
+
+      </aside>
+    </div>
+
+    <!-- Bottom Filmstrip & Playback Controller -->
+    <footer id="appFooter" class="h-36 sm:h-40 bg-[#0A0A0A] border-t border-white/5 flex flex-col z-30 shrink-0 select-none">
+      
+      <!-- Top Scrubber & Timecode Bar -->
+      <div class="h-11 border-b border-white/5 flex items-center px-6 gap-6 text-[10px] uppercase tracking-widest text-white/40 bg-[#0A0A0A]">
+        <div class="flex items-center gap-2.5">
+          <!-- Play / Pause Button -->
+          <button id="btnPlayPause" class="p-1.5 rounded text-white/70 hover:text-white hover:bg-white/5 transition-colors cursor-pointer" title="再生 / 一時停止 (Space)">
+            <i data-lucide="play" class="w-4 h-4 fill-current ml-0.5" id="playIcon"></i>
+          </button>
+
+          <!-- Stop Button -->
+          <button id="btnStop" class="p-1.5 rounded text-white/50 hover:text-red-400 hover:bg-red-950/30 transition-colors cursor-pointer" title="停止・最初に戻す (Sキー)">
+            <i data-lucide="square" class="w-3.5 h-3.5 fill-current"></i>
+          </button>
+
+          <div class="h-3 w-px bg-white/10 mx-0.5"></div>
+
+          <button id="btnPrevSlide" class="p-1 rounded text-white/40 hover:text-white hover:bg-white/5 transition-colors cursor-pointer" title="前のスライド (Left Arrow)">
+            <i data-lucide="skip-back" class="w-3.5 h-3.5"></i>
+          </button>
+          <button id="btnNextSlide" class="p-1 rounded text-white/40 hover:text-white hover:bg-white/5 transition-colors cursor-pointer" title="次のスライド (Right Arrow)">
+            <i data-lucide="skip-forward" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+
+        <!-- Master Timeline Progress Bar -->
+        <div class="flex items-center gap-3">
+          <div id="scrubberTrack" class="w-44 sm:w-60 h-1.5 bg-white/10 rounded-full relative overflow-hidden cursor-pointer group">
+            <div id="scrubberFill" class="absolute top-0 left-0 h-full bg-amber-500 rounded-full w-0 transition-all duration-150"></div>
+            <div id="scrubberSlideMarkers" class="absolute inset-0 pointer-events-none flex"></div>
+          </div>
+
+          <!-- Timecode Display -->
+          <div class="font-mono text-white/40 text-[10px] min-w-[75px]">
+            <span id="timecodeCurrent" class="text-white/80">00:00</span> / <span id="timecodeTotal">00:00</span>
+          </div>
+        </div>
+
+        <div class="flex-1 h-[1px] bg-white/5 hidden sm:block"></div>
+
+        <!-- Loop & Audio quick controls & Fullscreen controls -->
+        <div class="flex items-center gap-3 text-[9px] uppercase tracking-widest">
+          <button id="btnToggleLoop" class="text-amber-500 hover:text-amber-400 transition cursor-pointer p-1" title="ループ再生">
+            <i data-lucide="repeat" class="w-3.5 h-3.5"></i>
+          </button>
+          <button id="btnToggleMute" class="text-white/50 hover:text-white transition cursor-pointer p-1" title="ミュート切替 (M)">
+            <i data-lucide="volume-2" class="w-3.5 h-3.5" id="muteIcon"></i>
+          </button>
+          <button id="btnFooterFullscreen" class="px-2.5 py-1 rounded bg-white/5 hover:bg-amber-500 hover:text-black text-white/80 border border-white/15 transition flex items-center gap-1.5 cursor-pointer font-medium" title="全画面シアター上映 (Fキー)">
+            <i data-lucide="maximize" class="w-3 h-3 text-amber-400 group-hover:text-black"></i>
+            <span>全画面 (F)</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 35mm Filmstrip Thumbnails (Scrollable & Drag-and-Drop Reorderable) -->
+      <div class="flex-1 flex items-center px-6 gap-2 overflow-x-auto py-2 bg-[#050505]" id="filmstripContainer">
+        <!-- Dynamically rendered thumbnail cards -->
+      </div>
+    </footer>
+
+    <!-- Vanilla JS Application Engine -->
+    <script>
+      (function() {
+        // ==========================================
+        // 1. STATE & DATA INITIALIZATION
+        // ==========================================
+        const SAMPLE_SLIDES = [
+          {
+            id: 'sample-1',
+            imageUrl: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1600&auto=format&fit=crop',
+            title: '悠久の古都 - 京都 嵐山',
+            location: 'Kyoto, Japan',
+            subtitle: '風が笹を揺らし、木漏れ日が静寂の小径を照らす。',
+            script: '旅の始まりは千年の古都から。風が笹を揺らし、木漏れ日が静かに小径を照らしています。',
+            duration: 10,
+            motion: 'zoom-in',
+            transition: 'crossfade'
+          },
+          {
+            id: 'sample-2',
+            imageUrl: 'https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?q=80&w=1600&auto=format&fit=crop',
+            title: '夕暮れの地中海 - サントリーニ島',
+            location: 'Santorini, Greece',
+            subtitle: '紺碧の海と白亜の街並みを、夕陽が茜色に染め上げていく。',
+            script: 'エーゲ海に沈む夕陽。白亜の街並みを黄金色に染め、遠く穏やかな潮騒が響きます。',
+            duration: 10,
+            motion: 'pan-left',
+            transition: 'crossfade'
+          },
+          {
+            id: 'sample-3',
+            imageUrl: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1600&auto=format&fit=crop',
+            title: '大自然の鼓動 - スイス アルプス',
+            location: 'Swiss Alps',
+            subtitle: '雲海を抜けた先に広がる、息をのむような白銀の頂。',
+            script: '標高二千メートルの澄んだ大気。静寂の白銀の頂が、悠久の時の流れを物語ります。',
+            duration: 10,
+            motion: 'zoom-out',
+            transition: 'crossfade'
+          },
+          {
+            id: 'sample-4',
+            imageUrl: 'https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?q=80&w=1600&auto=format&fit=crop',
+            title: '星降る砂漠 - サハラの夜',
+            location: 'Sahara Desert, Morocco',
+            subtitle: '見上げる天空には、満天の星々と流れる銀河。',
+            script: '夜の静寂が広がるサハラ。見上げる満天の星々が、太古の光を優しく届けてくれます。',
+            duration: 10,
+            motion: 'tilt-up',
+            transition: 'crossfade'
+          },
+          {
+            id: 'sample-5',
+            imageUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1600&auto=format&fit=crop',
+            title: '旅の終わりに - 追憶の渚',
+            location: 'Endless Horizon',
+            subtitle: '旅は心に新たな記憶を刻み、次の目的地へと続く。',
+            script: '旅は心に温かな記憶を刻みました。美しい光景は、これからも色あせることはありません。',
+            duration: 10,
+            motion: 'zoom-in',
+            transition: 'crossfade'
+          }
+        ];
+
+        const state = {
+          slides: [],
+          currentIndex: 0,
+          isPlaying: false,
+          isLooping: true,
+          isMuted: false,
+          bgmVolume: 0.7,
+          bgmStyle: 'piano',
+          enableNarration: true,
+          enableDucking: true,
+          grainIntensity: 15,
+          dustCount: 30,
+          vignetteIntensity: 60,
+          enableLightLeak: true,
+          aspectRatio: 'cinemascope',
+          slideProgress: 0, // 0 to 1 inside current slide
+          slideElapsed: 0,
+          totalElapsed: 0,
+          draggedSlideIndex: null,
+          voiceEngine: 'gemini', // 'gemini' | 'webspeech'
+          geminiVoice: 'Aoede', // Aoede, Charon, Kore, Fenrir, Puck
+          isTheaterMode: false,
+          defaultDuration: 10,
+          voice: null,
+          voiceRate: 1.0,
+          voicePitch: 1.0,
+          geminiKey: localStorage.getItem('cinematic_gemini_key') || ''
+        };
+
+        // ==========================================
+        // 2. DOM ELEMENTS
+        // ==========================================
+        const el = {
+          stageContainer: document.getElementById('stageContainer'),
+          screenStage: document.getElementById('screenStage'),
+          slideImgA: document.getElementById('slideImgA'),
+          slideImgB: document.getElementById('slideImgB'),
+          slideTitleCard: document.getElementById('slideTitleCard'),
+          slideTitleText: document.getElementById('slideTitleText'),
+          slideLocationText: document.getElementById('slideLocationText'),
+          subtitleContainer: document.getElementById('subtitleContainer'),
+          subtitleBox: document.getElementById('subtitleBox'),
+          subtitleText: document.getElementById('subtitleText'),
+          narrationActiveBadge: document.getElementById('narrationActiveBadge'),
+          narrationActiveText: document.getElementById('narrationActiveText'),
+          emptyStatePrompt: document.getElementById('emptyStatePrompt'),
+          fxCanvas: document.getElementById('fxCanvas'),
+          vignetteOverlay: document.getElementById('vignetteOverlay'),
+          lightLeakOverlay: document.getElementById('lightLeakOverlay'),
+          letterboxTop: document.getElementById('letterboxTop'),
+          letterboxBottom: document.getElementById('letterboxBottom'),
+          dndDropzone: document.getElementById('dndDropzone'),
+          filmstripContainer: document.getElementById('filmstripContainer'),
+          btnPlayPause: document.getElementById('btnPlayPause'),
+          playIcon: document.getElementById('playIcon'),
+          btnStop: document.getElementById('btnStop'),
+          btnPrevSlide: document.getElementById('btnPrevSlide'),
+          btnNextSlide: document.getElementById('btnNextSlide'),
+          timecodeCurrent: document.getElementById('timecodeCurrent'),
+          timecodeTotal: document.getElementById('timecodeTotal'),
+          scrubberTrack: document.getElementById('scrubberTrack'),
+          scrubberFill: document.getElementById('scrubberFill'),
+          scrubberSlideMarkers: document.getElementById('scrubberSlideMarkers'),
+          btnToggleMute: document.getElementById('btnToggleMute'),
+          muteIcon: document.getElementById('muteIcon'),
+          btnToggleLoop: document.getElementById('btnToggleLoop'),
+          btnFullscreen: document.getElementById('btnFullscreen'),
+          btnStageFullscreen: document.getElementById('btnStageFullscreen'),
+          btnFooterFullscreen: document.getElementById('btnFooterFullscreen'),
+          btnExitTheater: document.getElementById('btnExitTheater'),
+          theaterHud: document.getElementById('theaterHud'),
+          btnTheaterPlayPause: document.getElementById('btnTheaterPlayPause'),
+          theaterPlayIcon: document.getElementById('theaterPlayIcon'),
+          btnTheaterStop: document.getElementById('btnTheaterStop'),
+          btnTheaterPrev: document.getElementById('btnTheaterPrev'),
+          btnTheaterNext: document.getElementById('btnTheaterNext'),
+          theaterTimecode: document.getElementById('theaterTimecode'),
+          theaterTitle: document.getElementById('theaterTitle'),
+          btnTheaterExit: document.getElementById('btnTheaterExit'),
+          btnToggleSidebar: document.getElementById('btnToggleSidebar'),
+          btnCloseSidebar: document.getElementById('btnCloseSidebar'),
+          sidebar: document.getElementById('sidebar'),
+          btnLoadSample: document.getElementById('btnLoadSample'),
+          btnEmptyLoadSample: document.getElementById('btnEmptyLoadSample'),
+          fileInput: document.getElementById('fileInput'),
+          emptyFileInput: document.getElementById('emptyFileInput'),
+          btnAiAnalyzeAll: document.getElementById('btnAiAnalyzeAll'),
+          btnAiBatchRun: document.getElementById('btnAiBatchRun'),
+          btnExportProject: document.getElementById('btnExportProject'),
+          btnSaveCinematic: document.getElementById('btnSaveCinematic'),
+          projectInput: document.getElementById('projectInput'),
+          projectInputTab: document.getElementById('projectInputTab'),
+          // Edit Tab
+          currentSlideIndicator: document.getElementById('currentSlideIndicator'),
+          editThumb: document.getElementById('editThumb'),
+          editDurationBadge: document.getElementById('editDurationBadge'),
+          editTitle: document.getElementById('editTitle'),
+          editSubtitle: document.getElementById('editSubtitle'),
+          editScript: document.getElementById('editScript'),
+          editScriptCounter: document.getElementById('editScriptCounter'),
+          editDuration: document.getElementById('editDuration'),
+          valDurationText: document.getElementById('valDurationText'),
+          editMotion: document.getElementById('editMotion'),
+          editTransition: document.getElementById('editTransition'),
+          btnAiAnalyzeCurrent: document.getElementById('btnAiAnalyzeCurrent'),
+          btnDeleteSlide: document.getElementById('btnDeleteSlide'),
+          btnPreviewSpeech: document.getElementById('btnPreviewSpeech'),
+          // FX Tab
+          tabBtnSlide: document.getElementById('tabBtnSlide'),
+          tabBtnFX: document.getElementById('tabBtnFX'),
+          tabBtnAI: document.getElementById('tabBtnAI'),
+          tabContentSlide: document.getElementById('tabContentSlide'),
+          tabContentFX: document.getElementById('tabContentFX'),
+          tabContentAI: document.getElementById('tabContentAI'),
+          sliderGlobalDuration: document.getElementById('sliderGlobalDuration'),
+          valGlobalDuration: document.getElementById('valGlobalDuration'),
+          btnApplyDurationToAll: document.getElementById('btnApplyDurationToAll'),
+          sliderGrain: document.getElementById('sliderGrain'),
+          valGrain: document.getElementById('valGrain'),
+          sliderDust: document.getElementById('sliderDust'),
+          valDust: document.getElementById('valDust'),
+          sliderVignette: document.getElementById('sliderVignette'),
+          valVignette: document.getElementById('valVignette'),
+          checkLightLeak: document.getElementById('checkLightLeak'),
+          selectAspect: document.getElementById('selectAspect'),
+          selectBgmStyle: document.getElementById('selectBgmStyle'),
+          sliderBgmVolume: document.getElementById('sliderBgmVolume'),
+          valBgmVolume: document.getElementById('valBgmVolume'),
+          checkNarration: document.getElementById('checkNarration'),
+          checkDucking: document.getElementById('checkDucking'),
+          selectVoiceEngine: document.getElementById('selectVoiceEngine'),
+          selectGeminiVoice: document.getElementById('selectGeminiVoice'),
+          geminiVoiceSection: document.getElementById('geminiVoiceSection'),
+          webSpeechVoiceSection: document.getElementById('webSpeechVoiceSection'),
+          btnTestVoice: document.getElementById('btnTestVoice'),
+          btnTestVoiceText: document.getElementById('btnTestVoiceText'),
+          selectVoice: document.getElementById('selectVoice'),
+          sliderVoiceRate: document.getElementById('sliderVoiceRate'),
+          valVoiceRate: document.getElementById('valVoiceRate'),
+          sliderVoicePitch: document.getElementById('sliderVoicePitch'),
+          valVoicePitch: document.getElementById('valVoicePitch'),
+          geminiApiKey: document.getElementById('geminiApiKey')
+        };
+
+        // Active image buffer tracker (toggle between slideImgA and slideImgB)
+        let activeImgElement = el.slideImgA;
+        let inactiveImgElement = el.slideImgB;
+        let animationTimer = null;
+        let lastTimestamp = 0;
+
+        // ==========================================
+        // 3. TONE.JS PROCEDURAL BGM & AUDIO DUCKING
+        // ==========================================
+        let audioCtxInitialized = false;
+        let bgmGainNode = null;
+        let synthPoly = null;
+        let reverbEffect = null;
+        let delayEffect = null;
+        let bgmSequenceLoop = null;
+
+        // Chord progressions for cinema travelogue
+        const CHORD_PRESETS = {
+          piano: [
+            ['A3', 'C4', 'E4', 'B4'], // Am9
+            ['F3', 'A3', 'C4', 'E4'], // Fmaj7
+            ['C3', 'G3', 'C4', 'E4'], // Cmaj
+            ['G3', 'B3', 'D4', 'G4']  // G
+          ],
+          ambient: [
+            ['D3', 'A3', 'D4', 'F4'],
+            ['Bb2', 'F3', 'Bb3', 'D4'],
+            ['F2', 'C3', 'F3', 'A3'],
+            ['C3', 'G3', 'C4', 'E4']
+          ],
+          musicbox: [
+            ['C5', 'E5', 'G5'],
+            ['G4', 'B4', 'D5'],
+            ['A4', 'C5', 'E5'],
+            ['F4', 'A4', 'C5']
+          ],
+          strings: [
+            ['D3', 'F3', 'A3', 'C4'],
+            ['G2', 'D3', 'G3', 'Bb3'],
+            ['Bb2', 'F3', 'Bb3', 'D4'],
+            ['A2', 'E3', 'A3', 'C#4']
+          ]
+        };
+
+        async function initAudio() {
+          if (audioCtxInitialized) return;
+          try {
+            await Tone.start();
+            
+            // Master BGM Volume Node with ramping for ducking
+            bgmGainNode = new Tone.Volume(state.isMuted ? -100 : Tone.gainToDb(state.bgmVolume)).toDestination();
+
+            reverbEffect = new Tone.Reverb({ decay: 4.5, wet: 0.5 }).connect(bgmGainNode);
+            delayEffect = new Tone.FeedbackDelay({ delayTime: '8n.', feedback: 0.35, wet: 0.25 }).connect(reverbEffect);
+
+            setupBgmSynth();
+            audioCtxInitialized = true;
+          } catch (err) {
+            console.warn('Audio Init Warning:', err);
+          }
+        }
+
+        function setupBgmSynth() {
+          if (synthPoly) synthPoly.dispose();
+          if (bgmSequenceLoop) bgmSequenceLoop.dispose();
+
+          const style = state.bgmStyle;
+
+          if (style === 'ambient') {
+            synthPoly = new Tone.PolySynth(Tone.Synth, {
+              oscillator: { type: 'sine' },
+              envelope: { attack: 2.5, decay: 3, sustain: 0.8, release: 3.5 }
+            }).connect(delayEffect);
+          } else if (style === 'musicbox') {
+            synthPoly = new Tone.PolySynth(Tone.Synth, {
+              oscillator: { type: 'triangle' },
+              envelope: { attack: 0.02, decay: 0.8, sustain: 0.1, release: 1.2 }
+            }).connect(delayEffect);
+          } else if (style === 'strings') {
+            synthPoly = new Tone.PolySynth(Tone.Synth, {
+              oscillator: { type: 'sawtooth8' },
+              envelope: { attack: 1.2, decay: 2, sustain: 0.7, release: 2.5 }
+            }).connect(reverbEffect);
+          } else {
+            // Poetic Piano
+            synthPoly = new Tone.PolySynth(Tone.Synth, {
+              oscillator: { type: 'triangle' },
+              envelope: { attack: 0.05, decay: 1.8, sustain: 0.3, release: 2.0 }
+            }).connect(delayEffect);
+          }
+
+          // Sequence loop
+          const chords = CHORD_PRESETS[style] || CHORD_PRESETS.piano;
+          let step = 0;
+
+          bgmSequenceLoop = new Tone.Loop((time) => {
+            const chord = chords[step % chords.length];
+            synthPoly.triggerAttackRelease(chord, '2n', time, 0.45);
+
+            // Add delicate decorative arpeggios
+            if (style === 'piano' || style === 'musicbox') {
+              const arpNote = chord[Math.floor(Math.random() * chord.length)];
+              synthPoly.triggerAttackRelease(arpNote, '8n', time + Tone.Time('4n').toSeconds(), 0.35);
+            }
+            step++;
+          }, '1m');
+
+          Tone.Transport.bpm.value = 68;
+        }
+
+        function playBGM() {
+          if (!audioCtxInitialized) return;
+          if (Tone.Transport.state !== 'started') {
+            Tone.Transport.start();
+          }
+          if (bgmSequenceLoop && bgmSequenceLoop.state !== 'started') {
+            bgmSequenceLoop.start(0);
+          }
+        }
+
+        function pauseBGM() {
+          if (!audioCtxInitialized) return;
+          if (synthPoly) {
+            try { synthPoly.releaseAll(); } catch(e) {}
+          }
+          if (Tone.Transport.state === 'started') {
+            Tone.Transport.pause();
+          }
+        }
+
+        function stopBGM() {
+          if (!audioCtxInitialized) return;
+          if (synthPoly) {
+            try { synthPoly.releaseAll(); } catch(e) {}
+          }
+          Tone.Transport.stop();
+          Tone.Transport.position = 0;
+        }
+
+        // Audio Ducking (Auto-lower BGM during narration)
+        function duckBGM(isDucking) {
+          if (!bgmGainNode || state.isMuted || !state.enableDucking) return;
+          const targetDb = isDucking ? -18 : Tone.gainToDb(state.bgmVolume);
+          bgmGainNode.volume.rampTo(targetDb, isDucking ? 0.35 : 0.8);
+        }
+
+        // ==========================================
+        // 4. SYNCHRONIZED SPEECH & GEMINI FLASH TTS ENGINE
+        // ==========================================
+        let currentUtterance = null;
+        const ttsAudioCache = new Map();
+
+        // Master Narration Synchronization Controller
+        const narrationEngine = {
+          token: 0,
+          activeSlideIndex: -1,
+          audioEl: null,
+          abortController: null,
+          isLoading: false,
+          isPlaying: false,
+          audioDuration: 0,
+          hasEnded: false
+        };
+
+        function updateNarrationStatusBadge(active, text = '') {
+          if (!el.narrationActiveBadge) return;
+          if (active) {
+            el.narrationActiveBadge.classList.remove('hidden');
+            el.narrationActiveBadge.classList.add('inline-flex');
+            if (el.narrationActiveText) el.narrationActiveText.textContent = text;
+          } else {
+            el.narrationActiveBadge.classList.add('hidden');
+            el.narrationActiveBadge.classList.remove('inline-flex');
+          }
+        }
+
+        async function fetchGeminiTTS(text, voice = 'Aoede', signal = null) {
+          const cleanText = text.trim();
+          const cacheKey = `${voice}:${cleanText}`;
+          if (ttsAudioCache.has(cacheKey)) {
+            return ttsAudioCache.get(cacheKey);
+          }
+
+          const res = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: cleanText, voice }),
+            signal: signal || undefined
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `TTS request failed with status ${res.status}`);
+          }
+
+          const blob = await res.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          ttsAudioCache.set(cacheKey, blobUrl);
+          return blobUrl;
+        }
+
+        function prefetchSlideTTS(index) {
+          if (state.voiceEngine !== 'gemini' || !state.enableNarration || !state.slides[index]) return;
+          const slide = state.slides[index];
+          const text = (slide.script || slide.subtitle || '').trim();
+          if (text) {
+            fetchGeminiTTS(text, state.geminiVoice).catch(() => {});
+          }
+        }
+
+        function prefetchAllSlidesTTS() {
+          if (state.voiceEngine !== 'gemini' || !state.enableNarration) return;
+          state.slides.forEach((_, idx) => {
+            setTimeout(() => prefetchSlideTTS(idx), idx * 350);
+          });
+        }
+
+        function loadVoices() {
+          const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+          if (!el.selectVoice) return;
+          el.selectVoice.innerHTML = '';
+          
+          // Filter Japanese or appropriate voices
+          const jaVoices = voices.filter(v => v.lang.includes('ja') || v.lang.includes('JP'));
+          const list = jaVoices.length > 0 ? jaVoices : voices;
+
+          list.forEach((v, i) => {
+            const opt = document.createElement('option');
+            opt.value = v.name;
+            opt.textContent = `${v.name} (${v.lang})`;
+            if (i === 0) opt.selected = true;
+            el.selectVoice.appendChild(opt);
+          });
+
+          if (list.length > 0) {
+            state.voice = list[0];
+          }
+        }
+
+        if ('speechSynthesis' in window) {
+          speechSynthesis.onvoiceschanged = loadVoices;
+          loadVoices();
+        }
+
+        function stopNarration() {
+          // Increment token to immediately invalidate any pending in-flight async TTS requests
+          narrationEngine.token++;
+          
+          if (narrationEngine.abortController) {
+            try {
+              narrationEngine.abortController.abort();
+            } catch (e) {}
+            narrationEngine.abortController = null;
+          }
+
+          if (narrationEngine.audioEl) {
+            try {
+              narrationEngine.audioEl.onplay = null;
+              narrationEngine.audioEl.onended = null;
+              narrationEngine.audioEl.onerror = null;
+              narrationEngine.audioEl.pause();
+              narrationEngine.audioEl.currentTime = 0;
+              narrationEngine.audioEl.src = '';
+            } catch (e) {}
+            narrationEngine.audioEl = null;
+          }
+
+          if ('speechSynthesis' in window) {
+            try {
+              speechSynthesis.cancel();
+            } catch (e) {}
+          }
+          currentUtterance = null;
+
+          narrationEngine.isLoading = false;
+          narrationEngine.isPlaying = false;
+          narrationEngine.audioDuration = 0;
+          narrationEngine.hasEnded = false;
+          narrationEngine.activeSlideIndex = -1;
+
+          duckBGM(false);
+          updateNarrationStatusBadge(false);
+        }
+
+        async function speakNarrationForSlide(slideIndex, isPreviewOnly = false) {
+          if (!state.enableNarration && !isPreviewOnly) {
+            narrationEngine.hasEnded = true;
+            return;
+          }
+
+          const slide = state.slides[slideIndex];
+          if (!slide) {
+            narrationEngine.hasEnded = true;
+            return;
+          }
+
+          const text = (slide.script || slide.subtitle || '').trim();
+          if (!text) {
+            narrationEngine.hasEnded = true;
+            return;
+          }
+
+          // Stop previous audio and stamp with new token
+          stopNarration();
+          const myToken = ++narrationEngine.token;
+          narrationEngine.activeSlideIndex = slideIndex;
+
+          if (state.voiceEngine === 'gemini') {
+            try {
+              narrationEngine.isLoading = true;
+              narrationEngine.abortController = new AbortController();
+              updateNarrationStatusBadge(true, 'Gemini AI音声 準備中...');
+
+              const audioUrl = await fetchGeminiTTS(
+                text,
+                state.geminiVoice || 'Aoede',
+                narrationEngine.abortController.signal
+              );
+
+              // Guard check: if user paused, stopped, or switched slides while downloading
+              if (myToken !== narrationEngine.token) return;
+              if (!isPreviewOnly && (!state.isPlaying || state.currentIndex !== slideIndex)) return;
+
+              narrationEngine.isLoading = false;
+              const audio = new Audio(audioUrl);
+              narrationEngine.audioEl = audio;
+              audio.playbackRate = state.voiceRate || 1.0;
+
+              // Read duration for slide pacing lock
+              audio.onloadedmetadata = () => {
+                if (myToken === narrationEngine.token) {
+                  narrationEngine.audioDuration = audio.duration;
+                }
+              };
+
+              audio.onplay = () => {
+                if (myToken !== narrationEngine.token || (!isPreviewOnly && !state.isPlaying)) {
+                  try { audio.pause(); } catch(e) {}
+                  return;
+                }
+                narrationEngine.isPlaying = true;
+                duckBGM(true);
+                updateNarrationStatusBadge(true, `Gemini Flash 朗読中 (${state.geminiVoice})`);
+              };
+
+              audio.onended = () => {
+                if (myToken === narrationEngine.token) {
+                  narrationEngine.isPlaying = false;
+                  narrationEngine.hasEnded = true;
+                  duckBGM(false);
+                  updateNarrationStatusBadge(false);
+                  narrationEngine.audioEl = null;
+                }
+              };
+
+              audio.onerror = () => {
+                if (myToken === narrationEngine.token) {
+                  narrationEngine.isLoading = false;
+                  narrationEngine.isPlaying = false;
+                  narrationEngine.hasEnded = true;
+                  duckBGM(false);
+                  updateNarrationStatusBadge(false);
+                  narrationEngine.audioEl = null;
+                  if (state.isPlaying || isPreviewOnly) {
+                    speakWebSpeech(text, myToken, slideIndex, isPreviewOnly);
+                  }
+                }
+              };
+
+              // Final check before playback
+              if (myToken !== narrationEngine.token) return;
+              if (!isPreviewOnly && (!state.isPlaying || state.currentIndex !== slideIndex)) return;
+
+              await audio.play();
+
+              // Prefetch the next scene audio immediately into memory cache
+              if (!isPreviewOnly) {
+                prefetchSlideTTS((slideIndex + 1) % state.slides.length);
+              }
+              return;
+            } catch (err) {
+              if (myToken !== narrationEngine.token) return;
+              console.warn('Gemini TTS error or cancelled, fallback to Web Speech:', err);
+              narrationEngine.isLoading = false;
+              updateNarrationStatusBadge(false);
+              if (state.isPlaying || isPreviewOnly) {
+                speakWebSpeech(text, myToken, slideIndex, isPreviewOnly);
+              }
+              return;
+            }
+          }
+
+          speakWebSpeech(text, myToken, slideIndex, isPreviewOnly);
+        }
+
+        function speakWebSpeech(text, token, slideIndex, isPreviewOnly = false) {
+          if (!('speechSynthesis' in window) || !text.trim()) {
+            narrationEngine.hasEnded = true;
+            return;
+          }
+          if (token !== narrationEngine.token) return;
+          if (!isPreviewOnly && (!state.isPlaying || state.currentIndex !== slideIndex)) return;
+
+          const utter = new SpeechSynthesisUtterance(text);
+          const voices = speechSynthesis.getVoices();
+          const selectedVoice = voices.find(v => v.name === el.selectVoice?.value);
+          if (selectedVoice) utter.voice = selectedVoice;
+
+          utter.rate = state.voiceRate;
+          utter.pitch = state.voicePitch;
+
+          utter.onstart = () => {
+            if (token !== narrationEngine.token) {
+              speechSynthesis.cancel();
+              return;
+            }
+            narrationEngine.isPlaying = true;
+            duckBGM(true);
+            updateNarrationStatusBadge(true, 'ブラウザ音声 朗読中');
+          };
+
+          utter.onend = () => {
+            if (token === narrationEngine.token) {
+              narrationEngine.isPlaying = false;
+              narrationEngine.hasEnded = true;
+              duckBGM(false);
+              updateNarrationStatusBadge(false);
+            }
+          };
+
+          utter.onerror = () => {
+            if (token === narrationEngine.token) {
+              narrationEngine.isPlaying = false;
+              narrationEngine.hasEnded = true;
+              duckBGM(false);
+              updateNarrationStatusBadge(false);
+            }
+          };
+
+          currentUtterance = utter;
+          speechSynthesis.speak(utter);
+        }
+
+        // ==========================================
+        // 5. CANVAS FX ENGINE (GRAIN & DUST PARTICLES)
+        // ==========================================
+        const ctx = el.fxCanvas.getContext('2d');
+        let dustParticles = [];
+
+        function resizeCanvas() {
+          const rect = el.fxCanvas.getBoundingClientRect();
+          el.fxCanvas.width = rect.width;
+          el.fxCanvas.height = rect.height;
+          initDust();
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+
+        function initDust() {
+          dustParticles = [];
+          const count = state.dustCount;
+          const w = el.fxCanvas.width || 800;
+          const h = el.fxCanvas.height || 600;
+
+          for (let i = 0; i < count; i++) {
+            dustParticles.push({
+              x: Math.random() * w,
+              y: Math.random() * h,
+              radius: Math.random() * 2.2 + 0.6,
+              alpha: Math.random() * 0.45 + 0.15,
+              vx: (Math.random() - 0.45) * 0.3,
+              vy: -(Math.random() * 0.4 + 0.15),
+              sineOffset: Math.random() * Math.PI * 2
+            });
+          }
+        }
+
+        // Offscreen canvas for grain noise generation optimization
+        const grainCanvas = document.createElement('canvas');
+        const grainCtx = grainCanvas.getContext('2d');
+        grainCanvas.width = 160;
+        grainCanvas.height = 160;
+
+        function updateGrainTexture() {
+          const imgData = grainCtx.createImageData(160, 160);
+          const buffer = imgData.data;
+          const len = buffer.length;
+          const alpha = (state.grainIntensity / 100) * 255;
+
+          for (let i = 0; i < len; i += 4) {
+            const gray = (Math.random() * 255) | 0;
+            buffer[i] = gray;
+            buffer[i + 1] = gray;
+            buffer[i + 2] = gray;
+            buffer[i + 3] = (Math.random() * alpha) | 0;
+          }
+          grainCtx.putImageData(imgData, 0, 0);
+        }
+
+        let grainFrameCounter = 0;
+
+        function renderFX() {
+          const w = el.fxCanvas.width;
+          const h = el.fxCanvas.height;
+          if (!w || !h) return;
+
+          ctx.clearRect(0, 0, w, h);
+
+          // 1. Draw Film Grain
+          if (state.grainIntensity > 0) {
+            grainFrameCounter++;
+            if (grainFrameCounter % 2 === 0) {
+              updateGrainTexture();
+            }
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            const pattern = ctx.createPattern(grainCanvas, 'repeat');
+            ctx.fillStyle = pattern;
+            ctx.fillRect(0, 0, w, h);
+            ctx.restore();
+          }
+
+          // 2. Draw Floating Dust Particles (Bokeh Motes)
+          if (state.dustCount > 0) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            const now = Date.now() * 0.001;
+
+            dustParticles.forEach(p => {
+              p.x += p.vx + Math.sin(now + p.sineOffset) * 0.2;
+              p.y += p.vy;
+
+              // Wrap around edges
+              if (p.y < -10) { p.y = h + 10; p.x = Math.random() * w; }
+              if (p.x < -10) p.x = w + 10;
+              if (p.x > w + 10) p.x = -10;
+
+              const radGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius * 2);
+              radGrad.addColorStop(0, `rgba(255, 230, 180, ${p.alpha})`);
+              radGrad.addColorStop(1, 'rgba(255, 200, 140, 0)');
+
+              ctx.fillStyle = radGrad;
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, p.radius * 2, 0, Math.PI * 2);
+              ctx.fill();
+            });
+            ctx.restore();
+          }
+        }
+
+        // ==========================================
+        // 6. SLIDESHOW & KEN BURNS CONTROLLER
+        // ==========================================
+        function getMotionClass(motionType) {
+          const list = ['zoom-in', 'zoom-out', 'pan-left', 'pan-right', 'tilt-up', 'tilt-down'];
+          if (motionType === 'random' || !motionType) {
+            return 'anim-' + list[Math.floor(Math.random() * list.length)];
+          }
+          return 'anim-' + motionType;
+        }
+
+        function displaySlide(index, skipFade = false) {
+          if (state.slides.length === 0) {
+            el.emptyStatePrompt.classList.remove('hidden');
+            el.slideImgA.style.opacity = '0';
+            el.slideImgB.style.opacity = '0';
+            el.slideTitleCard.style.opacity = '0';
+            el.subtitleBox.style.opacity = '0';
+            return;
+          }
+
+          el.emptyStatePrompt.classList.add('hidden');
+          const slide = state.slides[index];
+          state.currentIndex = index;
+          state.slideProgress = 0;
+          state.slideElapsed = 0;
+
+          // Swap active/inactive buffer
+          const incoming = inactiveImgElement;
+          const outgoing = activeImgElement;
+
+          // Set animation duration variable
+          incoming.style.setProperty('--slide-duration', `${slide.duration || 8}s`);
+          
+          // Reset animation classes
+          incoming.className = 'absolute inset-0 w-full h-full object-cover pointer-events-none transition-opacity duration-1000 ease-in-out ' + getMotionClass(slide.motion);
+          incoming.src = slide.imageUrl;
+
+          // Trigger crossfade transition
+          incoming.style.opacity = '1';
+          outgoing.style.opacity = '0';
+
+          // Swap references
+          activeImgElement = incoming;
+          inactiveImgElement = outgoing;
+
+          // Update Titles and Subtitles with smooth staggered entrance
+          el.slideTitleText.textContent = slide.title || '';
+          el.slideLocationText.textContent = slide.location || '';
+          el.slideTitleCard.style.opacity = slide.title ? '1' : '0';
+
+          // Subtitle box
+          if (slide.subtitle) {
+            el.subtitleText.textContent = slide.subtitle;
+            el.subtitleBox.style.opacity = '1';
+            el.subtitleBox.style.transform = 'translateY(0)';
+          } else {
+            el.subtitleBox.style.opacity = '0';
+            el.subtitleBox.style.transform = 'translateY(8px)';
+          }
+
+          if (el.theaterTitle) {
+            el.theaterTitle.textContent = slide.title || slide.subtitle || 'Cinematic Journey';
+          }
+
+          // Light Leak trigger animation on slide start
+          if (state.enableLightLeak) {
+            el.lightLeakOverlay.style.opacity = '0.7';
+            setTimeout(() => {
+              el.lightLeakOverlay.style.opacity = '0';
+            }, 2400);
+          }
+
+          // Trigger Narration synchronized to this scene
+          if (state.isPlaying) {
+            speakNarrationForSlide(index);
+          } else {
+            stopNarration();
+          }
+
+          // Update UI Filmstrip & Editor
+          updateFilmstripActiveState();
+          populateEditForm(slide);
+          updateTimecode();
+        }
+
+        function nextSlide() {
+          if (state.slides.length === 0) return;
+          let next = state.currentIndex + 1;
+          if (next >= state.slides.length) {
+            if (state.isLooping) {
+              next = 0;
+            } else {
+              pause();
+              return;
+            }
+          }
+          displaySlide(next);
+        }
+
+        function prevSlide() {
+          if (state.slides.length === 0) return;
+          let prev = state.currentIndex - 1;
+          if (prev < 0) {
+            prev = state.slides.length - 1;
+          }
+          displaySlide(prev);
+        }
+
+        async function play() {
+          await initAudio();
+          state.isPlaying = true;
+          el.playIcon.setAttribute('data-lucide', 'pause');
+          if (el.theaterPlayIcon) el.theaterPlayIcon.setAttribute('data-lucide', 'pause');
+          lucide.createIcons();
+          playBGM();
+          lastTimestamp = performance.now();
+          
+          speakNarrationForSlide(state.currentIndex);
+        }
+
+        function pause() {
+          state.isPlaying = false;
+          el.playIcon.setAttribute('data-lucide', 'play');
+          if (el.theaterPlayIcon) el.theaterPlayIcon.setAttribute('data-lucide', 'play');
+          lucide.createIcons();
+          pauseBGM();
+          stopNarration();
+        }
+
+        function stopPlayback() {
+          state.isPlaying = false;
+          el.playIcon.setAttribute('data-lucide', 'play');
+          if (el.theaterPlayIcon) el.theaterPlayIcon.setAttribute('data-lucide', 'play');
+          lucide.createIcons();
+          stopBGM();
+          stopNarration();
+          state.slideElapsed = 0;
+          state.slideProgress = 0;
+          if (state.slides.length > 0) {
+            displaySlide(state.currentIndex);
+          }
+          updateTimecode();
+        }
+
+        function togglePlay() {
+          if (state.isPlaying) {
+            pause();
+          } else {
+            play();
+          }
+        }
+
+        // Main animation & synchronized playback loop
+        function mainLoop(timestamp) {
+          if (!lastTimestamp) lastTimestamp = timestamp;
+          const delta = Math.min((timestamp - lastTimestamp) / 1000, 0.1);
+          lastTimestamp = timestamp;
+
+          renderFX();
+
+          if (state.isPlaying && state.slides.length > 0) {
+            const curSlide = state.slides[state.currentIndex];
+            const baseDur = curSlide ? (curSlide.duration || 8) : 8;
+
+            const hasSpeech = state.enableNarration && Boolean((curSlide.script || curSlide.subtitle || '').trim());
+            let effectiveSlideDur = baseDur;
+
+            if (hasSpeech && narrationEngine.audioDuration > 0) {
+              const adjustedAudioDur = (narrationEngine.audioDuration / (state.voiceRate || 1.0)) + 1.2;
+              effectiveSlideDur = Math.max(baseDur, adjustedAudioDur);
+            }
+
+            // Sync Ken Burns CSS variable to effective slide duration
+            if (activeImgElement) {
+              activeImgElement.style.setProperty('--slide-duration', `${effectiveSlideDur}s`);
+            }
+
+            state.slideElapsed += delta;
+            state.slideProgress = Math.min(state.slideElapsed / effectiveSlideDur, 1);
+
+            // Audio-Visual Synchronization Lock:
+            // Do NOT cut to the next slide while narration is still loading or currently reading!
+            const isNarrationActive = hasSpeech && (narrationEngine.isLoading || narrationEngine.isPlaying);
+            const isSafetyTimeout = state.slideElapsed >= Math.max(effectiveSlideDur + 3, 24);
+
+            if (state.slideElapsed >= effectiveSlideDur && (!isNarrationActive || isSafetyTimeout)) {
+              nextSlide();
+            }
+
+            updateTimecode();
+          }
+
+          requestAnimationFrame(mainLoop);
+        }
+
+        // ==========================================
+        // 7. FILMSTRIP & TIMELINE RENDERING
+        // ==========================================
+        function renderFilmstrip() {
+          el.filmstripContainer.innerHTML = '';
+
+          state.slides.forEach((slide, index) => {
+            const card = document.createElement('div');
+            const isActive = index === state.currentIndex;
+            card.className = `relative h-24 sm:h-28 w-36 sm:w-44 bg-[#141416] rounded-sm overflow-hidden flex-shrink-0 cursor-pointer transition-all select-none group flex flex-col ${
+              isActive 
+                ? 'border-2 border-amber-500 shadow-lg opacity-100' 
+                : 'border border-white/10 opacity-40 hover:opacity-90'
+            }`;
+            card.draggable = true;
+            card.dataset.index = index;
+
+            card.innerHTML = `
+              <div class="relative flex-1 w-full bg-black overflow-hidden">
+                <img src="${slide.imageUrl}" alt="${slide.title || 'Slide'}" class="w-full h-full object-cover">
+                <div class="absolute top-1.5 left-1.5 px-1 py-0.5 bg-black/70 text-[9px] font-mono text-white/80 rounded-xs">${String(index + 1).padStart(2, '0')}</div>
+              </div>
+              <div class="bg-black/85 px-2 py-1 flex justify-between items-center text-[9px] font-mono border-t border-white/5 shrink-0">
+                <span class="text-amber-400 font-semibold">${slide.duration || 8}.0秒</span>
+                <span class="text-white/50 truncate max-w-[85px] font-sans">${slide.title || 'シーン ' + (index + 1)}</span>
+              </div>
+            `;
+
+            // Click to navigate
+            card.addEventListener('click', () => {
+              displaySlide(index);
+            });
+
+            // Drag & Drop Reordering
+            card.addEventListener('dragstart', (e) => {
+              state.draggedSlideIndex = index;
+              e.dataTransfer.effectAllowed = 'move';
+              card.classList.add('opacity-30');
+            });
+
+            card.addEventListener('dragend', () => {
+              card.classList.remove('opacity-30');
+            });
+
+            card.addEventListener('dragover', (e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              card.classList.add('border-amber-400');
+            });
+
+            card.addEventListener('dragleave', () => {
+              if (index !== state.currentIndex) card.classList.remove('border-amber-400');
+            });
+
+            card.addEventListener('drop', (e) => {
+              e.preventDefault();
+              card.classList.remove('border-amber-400');
+              const fromIdx = state.draggedSlideIndex;
+              const toIdx = index;
+              if (fromIdx !== null && fromIdx !== toIdx) {
+                const moved = state.slides.splice(fromIdx, 1)[0];
+                state.slides.splice(toIdx, 0, moved);
+                if (state.currentIndex === fromIdx) {
+                  state.currentIndex = toIdx;
+                }
+                renderFilmstrip();
+                renderScrubberMarkers();
+              }
+            });
+
+            el.filmstripContainer.appendChild(card);
+          });
+
+          // Add (+) Button Card at the end
+          const addCard = document.createElement('label');
+          addCard.className = 'h-24 sm:h-28 w-28 rounded-sm border border-dashed border-white/15 hover:border-amber-500/60 bg-[#141416]/40 hover:bg-[#141416] flex flex-col items-center justify-center text-white/40 hover:text-amber-400 cursor-pointer shrink-0 transition text-xs gap-1.5';
+          addCard.innerHTML = `
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span class="text-[9px] tracking-wider font-sans">写真を追加</span>
+            <input type="file" multiple accept="image/*" class="hidden" id="filmstripFileInput">
+          `;
+          el.filmstripContainer.appendChild(addCard);
+
+          const stripFileInput = addCard.querySelector('#filmstripFileInput');
+          if (stripFileInput) {
+            stripFileInput.addEventListener('change', handleFilesSelected);
+          }
+
+          lucide.createIcons();
+          renderScrubberMarkers();
+        }
+
+        function updateFilmstripActiveState() {
+          const cards = el.filmstripContainer.querySelectorAll('[data-index]');
+          cards.forEach((card, idx) => {
+            if (idx === state.currentIndex) {
+              card.classList.add('border-2', 'border-amber-500', 'shadow-lg', 'opacity-100');
+              card.classList.remove('border-white/10', 'opacity-40');
+              card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+            } else {
+              card.classList.remove('border-2', 'border-amber-500', 'shadow-lg', 'opacity-100');
+              card.classList.add('border-white/10', 'opacity-40');
+            }
+          });
+        }
+
+        function renderScrubberMarkers() {
+          el.scrubberSlideMarkers.innerHTML = '';
+          const totalDur = state.slides.reduce((sum, s) => sum + (s.duration || 8), 0);
+          if (totalDur <= 0) return;
+
+          let accum = 0;
+          state.slides.forEach((s) => {
+            accum += s.duration || 8;
+            const pct = (accum / totalDur) * 100;
+            if (pct < 99) {
+              const mark = document.createElement('div');
+              mark.className = 'absolute top-0 bottom-0 w-0.5 bg-black/50';
+              mark.style.left = `${pct}%`;
+              el.scrubberSlideMarkers.appendChild(mark);
+            }
+          });
+        }
+
+        function updateTimecode() {
+          const totalDur = state.slides.reduce((sum, s) => sum + (s.duration || 8), 0);
+          let currentElapsed = 0;
+          for (let i = 0; i < state.currentIndex; i++) {
+            currentElapsed += state.slides[i].duration || 8;
+          }
+          currentElapsed += state.slideElapsed;
+
+          const curM = Math.floor(currentElapsed / 60);
+          const curS = Math.floor(currentElapsed % 60);
+          const totM = Math.floor(totalDur / 60);
+          const totS = Math.floor(totalDur % 60);
+
+          el.timecodeCurrent.textContent = `${String(curM).padStart(2, '0')}:${String(curS).padStart(2, '0')}`;
+          el.timecodeTotal.textContent = `${String(totM).padStart(2, '0')}:${String(totS).padStart(2, '0')}`;
+          if (el.theaterTimecode) {
+            el.theaterTimecode.textContent = `${String(curM).padStart(2, '0')}:${String(curS).padStart(2, '0')} / ${String(totM).padStart(2, '0')}:${String(totS).padStart(2, '0')}`;
+          }
+
+          const fillPct = totalDur > 0 ? (currentElapsed / totalDur) * 100 : 0;
+          el.scrubberFill.style.width = `${Math.min(fillPct, 100)}%`;
+        }
+
+        function updateScriptCounter(text) {
+          if (!el.editScriptCounter) return;
+          const count = (text || '').trim().length;
+          // 自然な語り部速度（約4.2文字/秒 + 句読点の息継ぎ）
+          const estSeconds = count > 0 ? Math.max(1, Math.round(count / 4.3)) : 0;
+          let statusColor = 'text-white/40';
+          if (estSeconds >= 8 && estSeconds <= 12) {
+            statusColor = 'text-emerald-400 font-bold'; // 10秒前後のベストゾーン
+          } else if (estSeconds > 0 && estSeconds < 8) {
+            statusColor = 'text-amber-400';
+          } else if (estSeconds > 12) {
+            statusColor = 'text-amber-300';
+          }
+          el.editScriptCounter.className = `font-mono font-medium ${statusColor}`;
+          el.editScriptCounter.textContent = `${count}文字 (朗読約${estSeconds}秒)`;
+        }
+
+        // ==========================================
+        // 8. SIDEBAR & EDIT FORM BINDING
+        // ==========================================
+        function populateEditForm(slide) {
+          if (!slide) return;
+          const dur = slide.duration || state.defaultDuration || 10;
+          el.currentSlideIndicator.textContent = `${state.currentIndex + 1} / ${state.slides.length}`;
+          el.editThumb.src = slide.imageUrl;
+          el.editDurationBadge.textContent = `${dur}.0秒`;
+          el.editTitle.value = slide.title || '';
+          el.editSubtitle.value = slide.subtitle || '';
+          el.editScript.value = slide.script || '';
+          el.editDuration.value = dur;
+          el.valDurationText.textContent = `${dur}秒`;
+          el.editMotion.value = slide.motion || 'random';
+          el.editTransition.value = slide.transition || 'crossfade';
+          updateScriptCounter(slide.script);
+        }
+
+        function saveFormToCurrentSlide() {
+          const slide = state.slides[state.currentIndex];
+          if (!slide) return;
+          slide.title = el.editTitle.value;
+          slide.subtitle = el.editSubtitle.value;
+          slide.script = el.editScript.value;
+          slide.duration = parseInt(el.editDuration.value, 10) || state.defaultDuration || 10;
+          slide.motion = el.editMotion.value;
+          slide.transition = el.editTransition.value;
+
+          // Update stage text in real time
+          el.slideTitleText.textContent = slide.title;
+          el.subtitleText.textContent = slide.subtitle;
+          el.editDurationBadge.textContent = `${slide.duration}.0秒`;
+          updateScriptCounter(slide.script);
+
+          renderFilmstrip();
+        }
+
+        el.editTitle.addEventListener('input', saveFormToCurrentSlide);
+        el.editSubtitle.addEventListener('input', saveFormToCurrentSlide);
+        el.editScript.addEventListener('input', () => {
+          updateScriptCounter(el.editScript.value);
+          saveFormToCurrentSlide();
+        });
+        el.editDuration.addEventListener('input', () => {
+          el.valDurationText.textContent = `${el.editDuration.value}秒`;
+          saveFormToCurrentSlide();
+        });
+        el.editMotion.addEventListener('change', saveFormToCurrentSlide);
+        el.editTransition.addEventListener('change', saveFormToCurrentSlide);
+
+        // Preview speech button
+        el.btnPreviewSpeech.addEventListener('click', () => {
+          saveFormToCurrentSlide();
+          speakNarrationForSlide(state.currentIndex, true);
+        });
+
+        // Delete slide
+        el.btnDeleteSlide.addEventListener('click', () => {
+          if (state.slides.length <= 1) {
+            alert('スライドは最低1枚必要です。');
+            return;
+          }
+          state.slides.splice(state.currentIndex, 1);
+          if (state.currentIndex >= state.slides.length) {
+            state.currentIndex = state.slides.length - 1;
+          }
+          renderFilmstrip();
+          displaySlide(state.currentIndex);
+        });
+
+        // ==========================================
+        // 9. FILE IMPORT & PROJECT SAVE/LOAD
+        // ==========================================
+        function handleFilesSelected(e) {
+          const files = Array.from(e.target.files || []);
+          if (files.length === 0) return;
+
+          files.forEach(file => {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              const newSlide = {
+                id: 'slide-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+                imageUrl: event.target.result,
+                title: file.name.replace(/\.[^/.]+$/, ''),
+                location: 'Memories',
+                subtitle: '旅路の記憶が、静かに息づく。',
+                script: 'あの日出会った柔らかな光と風。切り取られた一瞬の景色は、今も心に静かに息づいています。',
+                duration: state.defaultDuration || 10,
+                motion: 'random',
+                transition: 'crossfade'
+              };
+              state.slides.push(newSlide);
+              renderFilmstrip();
+              if (state.slides.length === 1) {
+                displaySlide(0);
+              }
+            };
+            reader.readAsDataURL(file);
+          });
+        }
+
+        el.fileInput.addEventListener('change', handleFilesSelected);
+        el.emptyFileInput.addEventListener('change', handleFilesSelected);
+
+        // Drag & Drop on Stage
+        const stageEl = document.getElementById('stageContainer');
+        stageEl.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          el.dndDropzone.classList.remove('opacity-0');
+        });
+        stageEl.addEventListener('dragleave', (e) => {
+          if (!stageEl.contains(e.relatedTarget)) {
+            el.dndDropzone.classList.add('opacity-0');
+          }
+        });
+        stageEl.addEventListener('drop', (e) => {
+          e.preventDefault();
+          el.dndDropzone.classList.add('opacity-0');
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            handleFilesSelected({ target: { files: e.dataTransfer.files } });
+          }
+        });
+
+        // Load Sample Photos
+        function loadSampleSlides() {
+          stopPlayback();
+          state.slides = JSON.parse(JSON.stringify(SAMPLE_SLIDES));
+          state.currentIndex = 0;
+          renderFilmstrip();
+          displaySlide(0);
+          prefetchAllSlidesTTS();
+        }
+
+        el.btnLoadSample.addEventListener('click', loadSampleSlides);
+        el.btnEmptyLoadSample.addEventListener('click', loadSampleSlides);
+
+        // Project Export (.cinematic JSON)
+        function exportProject() {
+          const projectData = {
+            version: '1.0',
+            exportedAt: new Date().toISOString(),
+            settings: {
+              defaultDuration: state.defaultDuration || 8,
+              bgmStyle: state.bgmStyle,
+              bgmVolume: state.bgmVolume,
+              grainIntensity: state.grainIntensity,
+              dustCount: state.dustCount,
+              vignetteIntensity: state.vignetteIntensity,
+              aspectRatio: state.aspectRatio,
+              voiceRate: state.voiceRate,
+              voicePitch: state.voicePitch
+            },
+            slides: state.slides
+          };
+
+          const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `Cinematic_Story_${new Date().toISOString().slice(0, 10)}.cinematic`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+
+        el.btnExportProject.addEventListener('click', exportProject);
+        el.btnSaveCinematic.addEventListener('click', exportProject);
+
+        // Project Import
+        function importProject(file) {
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              const data = JSON.parse(e.target.result);
+              if (data.slides && Array.isArray(data.slides)) {
+                state.slides = data.slides;
+                if (data.settings) {
+                  Object.assign(state, data.settings);
+                  syncSettingsUI();
+                }
+                state.currentIndex = 0;
+                renderFilmstrip();
+                displaySlide(0);
+                alert('プロジェクトを正常に読み込みました。');
+              }
+            } catch (err) {
+              alert('ファイルの解析に失敗しました。有効な.cinematicファイルを選択してください。');
+            }
+          };
+          reader.readAsText(file);
+        }
+
+        el.projectInput.addEventListener('change', (e) => importProject(e.target.files[0]));
+        el.projectInputTab.addEventListener('change', (e) => importProject(e.target.files[0]));
+
+        function syncSettingsUI() {
+          if (el.sliderGlobalDuration) {
+            el.sliderGlobalDuration.value = state.defaultDuration || 8;
+            if (el.valGlobalDuration) el.valGlobalDuration.textContent = `${state.defaultDuration || 8}秒`;
+          }
+          el.sliderGrain.value = state.grainIntensity;
+          el.valGrain.textContent = `${state.grainIntensity}%`;
+          el.sliderDust.value = state.dustCount;
+          el.valDust.textContent = `ON (${state.dustCount}個)`;
+          el.sliderVignette.value = state.vignetteIntensity;
+          el.valVignette.textContent = `${state.vignetteIntensity}%`;
+          el.selectAspect.value = state.aspectRatio;
+          el.selectBgmStyle.value = state.bgmStyle;
+          el.sliderBgmVolume.value = Math.round(state.bgmVolume * 100);
+          el.valBgmVolume.textContent = `${Math.round(state.bgmVolume * 100)}%`;
+          applyAspect(state.aspectRatio);
+        }
+
+        // ==========================================
+        // 10. GEMINI API & AI SCENARIO GENERATOR
+        // ==========================================
+        const BUILTIN_POETIC_TEMPLATES = [
+          {
+            title: "時の静寂を旅する",
+            subtitle: "風が囁く古の物語に、そっと耳を澄ませて。",
+            script: "見慣れた日常を離れて出会う静寂。大自然の柔らかな息づかいが、旅人の心を優しく解き放ちます。"
+          },
+          {
+            title: "茜色の追憶と地平線",
+            subtitle: "夕陽がすべてを黄金色に包み込む、奇跡の刻。",
+            script: "空と大地が溶け合う黄昏の刻。記憶の彼方に眠っていた温かい思い出が、静かに蘇ります。"
+          },
+          {
+            title: "悠久の光と影",
+            subtitle: "幾重にも重なる時の彼方へ、想いを馳せる旅路。",
+            script: "長い年月を超えて受け継がれた光。風が運ぶ懐かしい香りに包まれ、心穏やかな旅路が続きます。"
+          },
+          {
+            title: "星屑と目覚めの朝",
+            subtitle: "新しい風が、未知なる地平線の彼方へと誘う。",
+            script: "朝露に輝く新しい光の道。澄み渡る風を胸いっぱいに吸い込み、次の物語へと歩み出します。"
+          }
+        ];
+
+        async function analyzeWithGemini(slide, apiKey) {
+          // 1. Try server-side analyze endpoint (uses server GEMINI_API_KEY)
+          try {
+            const res = await fetch('/api/analyze', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                imageBase64: slide.imageUrl,
+                mimeType: slide.imageUrl.includes('image/png') ? 'image/png' : 'image/jpeg'
+              })
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              if (data && data.title) {
+                return data;
+              }
+            }
+          } catch (e) {
+            console.warn('Backend analyze fallback:', e);
+          }
+
+          if (!apiKey) {
+            // Built-in intelligent poetic generator fallback
+            const tpl = BUILTIN_POETIC_TEMPLATES[Math.floor(Math.random() * BUILTIN_POETIC_TEMPLATES.length)];
+            return {
+              title: tpl.title,
+              subtitle: tpl.subtitle,
+              script: tpl.script
+            };
+          }
+
+          try {
+            // Gemini Multimodal direct generation call if user entered key
+            const prompt = `あなたは世界的な紀行映画の映画監督です。この写真を分析し、スライドショーの心地よいテンポを保つため【10秒前後で朗読できる長さ（厳密に42〜48文字程度、1〜2文）】のナレーション台本を次のJSON形式で出力してください：
+{"title": "詩的なロケーション/タイトル", "subtitle": "画面に映し出す1行の文学的字幕 (15〜25文字)", "script": "落ち着いた語り部が10秒前後で穏やかに語るナレーション朗読台本 (厳密に42〜48文字程度、1〜2文)"}`;
+
+            let parts = [{ text: prompt }];
+
+            // If base64 image
+            if (slide.imageUrl.startsWith('data:image')) {
+              const mime = slide.imageUrl.substring(slide.imageUrl.indexOf(':') + 1, slide.imageUrl.indexOf(';'));
+              const b64Data = slide.imageUrl.split(',')[1];
+              parts.push({
+                inlineData: {
+                  mimeType: mime,
+                  data: b64Data
+                }
+              });
+            }
+
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts }],
+                generationConfig: { responseMimeType: 'application/json' }
+              })
+            });
+
+            if (!res.ok) throw new Error('API request failed');
+            const data = await res.json();
+            const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            return JSON.parse(textContent);
+          } catch (e) {
+            console.warn('Gemini direct call fallback:', e);
+            const tpl = BUILTIN_POETIC_TEMPLATES[Math.floor(Math.random() * BUILTIN_POETIC_TEMPLATES.length)];
+            return {
+              title: tpl.title,
+              subtitle: tpl.subtitle,
+              script: tpl.script
+            };
+          }
+        }
+
+        async function runSingleAi(index) {
+          const slide = state.slides[index];
+          if (!slide) return;
+          const apiKey = el.geminiApiKey.value.trim();
+          el.btnAiAnalyzeCurrent.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i><span>AI解析執筆中...</span>';
+          lucide.createIcons();
+
+          const res = await analyzeWithGemini(slide, apiKey);
+          slide.title = res.title || slide.title;
+          slide.subtitle = res.subtitle || slide.subtitle;
+          slide.script = res.script || slide.script;
+
+          populateEditForm(slide);
+          renderFilmstrip();
+          displaySlide(index);
+
+          el.btnAiAnalyzeCurrent.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5 text-emerald-400"></i><span>生成完了</span>';
+          lucide.createIcons();
+          setTimeout(() => {
+            el.btnAiAnalyzeCurrent.innerHTML = '<i data-lucide="sparkles" class="w-3.5 h-3.5"></i><span>このスライドをAI解析</span>';
+            lucide.createIcons();
+          }, 2000);
+        }
+
+        async function runBatchAi() {
+          if (state.slides.length === 0) return;
+          const apiKey = el.geminiApiKey.value.trim();
+          if (apiKey) {
+            localStorage.setItem('cinematic_gemini_key', apiKey);
+          }
+
+          el.btnAiBatchRun.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i><span>全スライド解析中...</span>';
+          lucide.createIcons();
+
+          for (let i = 0; i < state.slides.length; i++) {
+            const res = await analyzeWithGemini(state.slides[i], apiKey);
+            state.slides[i].title = res.title || state.slides[i].title;
+            state.slides[i].subtitle = res.subtitle || state.slides[i].subtitle;
+            state.slides[i].script = res.script || state.slides[i].script;
+          }
+
+          renderFilmstrip();
+          displaySlide(state.currentIndex);
+
+          el.btnAiBatchRun.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5 text-black"></i><span>全台本生成完了！</span>';
+          lucide.createIcons();
+          setTimeout(() => {
+            el.btnAiBatchRun.innerHTML = '<i data-lucide="wand-2" class="w-3.5 h-3.5"></i><span>全スライドを一括AI解析・台本執筆</span>';
+            lucide.createIcons();
+          }, 2500);
+        }
+
+        el.btnAiAnalyzeCurrent.addEventListener('click', () => runSingleAi(state.currentIndex));
+        el.btnAiBatchRun.addEventListener('click', runBatchAi);
+        el.btnAiAnalyzeAll.addEventListener('click', () => {
+          openTab('ai');
+          runBatchAi();
+        });
+
+        // ==========================================
+        // 11. CONTROLS, SETTINGS & SHORTCUTS
+        // ==========================================
+        el.btnPlayPause.addEventListener('click', togglePlay);
+        if (el.btnStop) el.btnStop.addEventListener('click', stopPlayback);
+        el.btnPrevSlide.addEventListener('click', prevSlide);
+        el.btnNextSlide.addEventListener('click', nextSlide);
+
+        // Loop Toggle
+        el.btnToggleLoop.addEventListener('click', () => {
+          state.isLooping = !state.isLooping;
+          el.btnToggleLoop.classList.toggle('text-cinema-gold', state.isLooping);
+          el.btnToggleLoop.classList.toggle('text-zinc-500', !state.isLooping);
+        });
+
+        // Mute Toggle
+        el.btnToggleMute.addEventListener('click', () => {
+          state.isMuted = !state.isMuted;
+          if (bgmGainNode) {
+            bgmGainNode.volume.value = state.isMuted ? -100 : Tone.gainToDb(state.bgmVolume);
+          }
+          el.muteIcon.setAttribute('data-lucide', state.isMuted ? 'volume-x' : 'volume-2');
+          lucide.createIcons();
+        });
+
+        // Scrubber Click
+        el.scrubberTrack.addEventListener('click', (e) => {
+          const rect = el.scrubberTrack.getBoundingClientRect();
+          const clickRatio = (e.clientX - rect.left) / rect.width;
+          const totalDur = state.slides.reduce((sum, s) => sum + (s.duration || 8), 0);
+          const targetTime = clickRatio * totalDur;
+
+          let accum = 0;
+          for (let i = 0; i < state.slides.length; i++) {
+            const d = state.slides[i].duration || 8;
+            if (accum + d >= targetTime) {
+              displaySlide(i);
+              state.slideElapsed = targetTime - accum;
+              state.slideProgress = state.slideElapsed / d;
+              break;
+            }
+            accum += d;
+          }
+        });
+
+        // Global Slide Duration (Tab 2)
+        if (el.sliderGlobalDuration) {
+          el.sliderGlobalDuration.addEventListener('input', () => {
+            state.defaultDuration = parseInt(el.sliderGlobalDuration.value, 10);
+            if (el.valGlobalDuration) {
+              el.valGlobalDuration.textContent = `${state.defaultDuration}秒`;
+            }
+          });
+        }
+
+        if (el.btnApplyDurationToAll) {
+          el.btnApplyDurationToAll.addEventListener('click', () => {
+            const dur = state.defaultDuration || 8;
+            state.slides.forEach(s => {
+              s.duration = dur;
+            });
+            if (state.slides[state.currentIndex]) {
+              el.editDuration.value = dur;
+              el.valDurationText.textContent = `${dur}秒`;
+              el.editDurationBadge.textContent = `${dur}.0s`;
+            }
+            renderFilmstrip();
+            renderScrubberMarkers();
+            
+            const originalHTML = el.btnApplyDurationToAll.innerHTML;
+            el.btnApplyDurationToAll.innerHTML = '<i data-lucide="check" class="w-3 h-3 text-emerald-400"></i><span class="text-emerald-300">全スライドに適用完了！</span>';
+            lucide.createIcons();
+            setTimeout(() => {
+              el.btnApplyDurationToAll.innerHTML = originalHTML;
+              lucide.createIcons();
+            }, 2000);
+          });
+        }
+
+        // FX Sliders
+        el.sliderGrain.addEventListener('input', () => {
+          state.grainIntensity = parseInt(el.sliderGrain.value, 10);
+          el.valGrain.textContent = `${state.grainIntensity}%`;
+        });
+
+        el.sliderDust.addEventListener('input', () => {
+          state.dustCount = parseInt(el.sliderDust.value, 10);
+          el.valDust.textContent = state.dustCount > 0 ? `ON (${state.dustCount}個)` : 'OFF';
+          initDust();
+        });
+
+        el.sliderVignette.addEventListener('input', () => {
+          state.vignetteIntensity = parseInt(el.sliderVignette.value, 10);
+          el.valVignette.textContent = `${state.vignetteIntensity}%`;
+          el.vignetteOverlay.style.boxShadow = `inset 0 0 140px ${state.vignetteIntensity * 0.8}px rgba(0,0,0,${state.vignetteIntensity / 100})`;
+        });
+
+        el.checkLightLeak.addEventListener('change', () => {
+          state.enableLightLeak = el.checkLightLeak.checked;
+        });
+
+        function applyAspect(val) {
+          state.aspectRatio = val;
+          if (val === 'cinemascope') {
+            el.letterboxTop.style.height = '14%';
+            el.letterboxBottom.style.height = '14%';
+          } else if (val === 'classic169') {
+            el.letterboxTop.style.height = '6%';
+            el.letterboxBottom.style.height = '6%';
+          } else {
+            el.letterboxTop.style.height = '0px';
+            el.letterboxBottom.style.height = '0px';
+          }
+        }
+
+        el.selectAspect.addEventListener('change', () => applyAspect(el.selectAspect.value));
+
+        // BGM Style & Volume
+        el.selectBgmStyle.addEventListener('change', () => {
+          state.bgmStyle = el.selectBgmStyle.value;
+          if (audioCtxInitialized) {
+            setupBgmSynth();
+            if (state.isPlaying) playBGM();
+          }
+        });
+
+        el.sliderBgmVolume.addEventListener('input', () => {
+          state.bgmVolume = parseInt(el.sliderBgmVolume.value, 10) / 100;
+          el.valBgmVolume.textContent = `${Math.round(state.bgmVolume * 100)}%`;
+          if (bgmGainNode && !state.isMuted) {
+            bgmGainNode.volume.value = Tone.gainToDb(state.bgmVolume);
+          }
+        });
+
+        // Speech options & Voice Engine
+        if (el.selectVoiceEngine) {
+          el.selectVoiceEngine.addEventListener('change', () => {
+            state.voiceEngine = el.selectVoiceEngine.value;
+            if (state.voiceEngine === 'gemini') {
+              el.geminiVoiceSection?.classList.remove('hidden');
+              el.webSpeechVoiceSection?.classList.add('hidden');
+            } else {
+              el.geminiVoiceSection?.classList.add('hidden');
+              el.webSpeechVoiceSection?.classList.remove('hidden');
+            }
+          });
+        }
+
+        if (el.selectGeminiVoice) {
+          el.selectGeminiVoice.addEventListener('change', () => {
+            state.geminiVoice = el.selectGeminiVoice.value;
+          });
+        }
+
+        async function previewSampleSpeech(text) {
+          if (!text || !text.trim()) return;
+          stopNarration();
+          const myToken = ++narrationEngine.token;
+          if (state.voiceEngine === 'gemini') {
+            try {
+              narrationEngine.isLoading = true;
+              narrationEngine.abortController = new AbortController();
+              updateNarrationStatusBadge(true, 'Gemini AI音声 準備中...');
+              const audioUrl = await fetchGeminiTTS(text, state.geminiVoice || 'Aoede', narrationEngine.abortController.signal);
+              if (myToken !== narrationEngine.token) return;
+              narrationEngine.isLoading = false;
+              const audio = new Audio(audioUrl);
+              narrationEngine.audioEl = audio;
+              audio.playbackRate = state.voiceRate || 1.0;
+              audio.onplay = () => {
+                if (myToken !== narrationEngine.token) {
+                  try { audio.pause(); } catch(e) {}
+                  return;
+                }
+                narrationEngine.isPlaying = true;
+                duckBGM(true);
+                updateNarrationStatusBadge(true, `Gemini Flash 試聴中 (${state.geminiVoice})`);
+              };
+              audio.onended = () => {
+                if (myToken === narrationEngine.token) {
+                  narrationEngine.isPlaying = false;
+                  narrationEngine.hasEnded = true;
+                  duckBGM(false);
+                  updateNarrationStatusBadge(false);
+                  narrationEngine.audioEl = null;
+                }
+              };
+              audio.onerror = () => {
+                if (myToken === narrationEngine.token) {
+                  narrationEngine.isLoading = false;
+                  narrationEngine.isPlaying = false;
+                  duckBGM(false);
+                  updateNarrationStatusBadge(false);
+                  narrationEngine.audioEl = null;
+                  speakWebSpeech(text, myToken, state.currentIndex, true);
+                }
+              };
+              await audio.play();
+            } catch (err) {
+              if (myToken !== narrationEngine.token) return;
+              narrationEngine.isLoading = false;
+              updateNarrationStatusBadge(false);
+              speakWebSpeech(text, myToken, state.currentIndex, true);
+            }
+          } else {
+            speakWebSpeech(text, myToken, state.currentIndex, true);
+          }
+        }
+
+        if (el.btnTestVoice) {
+          el.btnTestVoice.addEventListener('click', async () => {
+            const originalHtml = el.btnTestVoice.innerHTML;
+            try {
+              el.btnTestVoice.disabled = true;
+              el.btnTestVoice.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i><span>朗読音声 生成中...</span>';
+              lucide.createIcons();
+
+              const sampleSentence = '静寂の森、木漏れ日がそっと小径を照らしています。どこまでも澄み渡る風が吹き抜けていきます。';
+              await previewSampleSpeech(sampleSentence);
+            } catch (err) {
+              console.error('Test voice error:', err);
+            } finally {
+              el.btnTestVoice.disabled = false;
+              el.btnTestVoice.innerHTML = originalHtml;
+              lucide.createIcons();
+            }
+          });
+        }
+
+        el.checkNarration.addEventListener('change', () => {
+          state.enableNarration = el.checkNarration.checked;
+          if (!state.enableNarration) stopNarration();
+        });
+        el.checkDucking.addEventListener('change', () => {
+          state.enableDucking = el.checkDucking.checked;
+        });
+        el.sliderVoiceRate.addEventListener('input', () => {
+          state.voiceRate = parseFloat(el.sliderVoiceRate.value);
+          el.valVoiceRate.textContent = `${state.voiceRate.toFixed(1)}x`;
+          if (narrationEngine.audioEl) narrationEngine.audioEl.playbackRate = state.voiceRate;
+        });
+        el.sliderVoicePitch.addEventListener('input', () => {
+          state.voicePitch = parseFloat(el.sliderVoicePitch.value);
+          el.valVoicePitch.textContent = state.voicePitch.toFixed(1);
+        });
+
+        // ==========================================
+        // Fullscreen & Theater mode Controller
+        // ==========================================
+        let hudHideTimeout = null;
+
+        function showTheaterHud() {
+          if (!state.isTheaterMode || !el.theaterHud) return;
+          el.theaterHud.style.opacity = '1';
+          el.theaterHud.style.pointerEvents = 'auto';
+          if (hudHideTimeout) clearTimeout(hudHideTimeout);
+          hudHideTimeout = setTimeout(() => {
+            if (state.isTheaterMode && state.isPlaying) {
+              el.theaterHud.style.opacity = '0';
+              el.theaterHud.style.pointerEvents = 'none';
+            }
+          }, 3500);
+        }
+
+        function enterTheaterMode() {
+          state.isTheaterMode = true;
+          document.body.classList.add('theater-fullscreen');
+          if (el.stageContainer) el.stageContainer.classList.add('theater-active');
+          if (el.theaterHud) {
+            el.theaterHud.classList.remove('hidden');
+            el.theaterHud.classList.add('flex');
+            showTheaterHud();
+          }
+          if (el.btnExitTheater) {
+            el.btnExitTheater.classList.remove('hidden');
+            el.btnExitTheater.classList.add('flex');
+          }
+
+          // Request native Fullscreen API if permitted
+          if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(() => {
+              // Iframe restrictions are handled by our CSS theater-fullscreen fallback
+            });
+          }
+
+          resizeCanvas();
+        }
+
+        function exitTheaterMode() {
+          state.isTheaterMode = false;
+          document.body.classList.remove('theater-fullscreen');
+          if (el.stageContainer) el.stageContainer.classList.remove('theater-active');
+          if (el.theaterHud) {
+            el.theaterHud.classList.add('hidden');
+            el.theaterHud.classList.remove('flex');
+          }
+          if (el.btnExitTheater) {
+            el.btnExitTheater.classList.add('hidden');
+            el.btnExitTheater.classList.remove('flex');
+          }
+          if (hudHideTimeout) clearTimeout(hudHideTimeout);
+
+          if (document.fullscreenElement && document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+          }
+
+          resizeCanvas();
+        }
+
+        function toggleFullscreen() {
+          if (state.isTheaterMode || document.fullscreenElement) {
+            exitTheaterMode();
+          } else {
+            enterTheaterMode();
+          }
+        }
+
+        // Attach Theater HUD event listeners
+        if (el.btnFullscreen) el.btnFullscreen.addEventListener('click', toggleFullscreen);
+        if (el.btnStageFullscreen) el.btnStageFullscreen.addEventListener('click', toggleFullscreen);
+        if (el.btnFooterFullscreen) el.btnFooterFullscreen.addEventListener('click', toggleFullscreen);
+        if (el.btnExitTheater) el.btnExitTheater.addEventListener('click', exitTheaterMode);
+        if (el.btnTheaterExit) el.btnTheaterExit.addEventListener('click', exitTheaterMode);
+
+        if (el.btnTheaterPlayPause) el.btnTheaterPlayPause.addEventListener('click', togglePlay);
+        if (el.btnTheaterStop) el.btnTheaterStop.addEventListener('click', stopPlayback);
+        if (el.btnTheaterPrev) el.btnTheaterPrev.addEventListener('click', prevSlide);
+        if (el.btnTheaterNext) el.btnTheaterNext.addEventListener('click', nextSlide);
+
+        // Double click on screen stage toggles fullscreen
+        if (el.screenStage) {
+          el.screenStage.addEventListener('dblclick', toggleFullscreen);
+        }
+
+        // Mouse activity in theater mode
+        window.addEventListener('mousemove', () => {
+          if (state.isTheaterMode) {
+            showTheaterHud();
+          }
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+          if (!document.fullscreenElement && state.isTheaterMode) {
+            // If user pressed browser ESC, sync state
+            exitTheaterMode();
+          }
+        });
+
+        // Sidebar drawer toggling & tabs
+        function openTab(tabName) {
+          el.sidebar.classList.remove('translate-x-full');
+          const inactiveClass = 'px-2.5 py-1 text-[10px] uppercase tracking-wider rounded-sm font-semibold transition text-white/40 hover:text-white/80 border border-transparent';
+          const activeClass = 'px-2.5 py-1 text-[10px] uppercase tracking-wider rounded-sm font-semibold transition bg-white/10 text-amber-400 border border-white/20';
+
+          el.tabBtnSlide.className = inactiveClass;
+          el.tabBtnFX.className = inactiveClass;
+          el.tabBtnAI.className = inactiveClass;
+
+          el.tabContentSlide.classList.add('hidden');
+          el.tabContentFX.classList.add('hidden');
+          el.tabContentAI.classList.add('hidden');
+
+          if (tabName === 'slide') {
+            el.tabBtnSlide.className = activeClass;
+            el.tabContentSlide.classList.remove('hidden');
+          } else if (tabName === 'fx') {
+            el.tabBtnFX.className = activeClass;
+            el.tabContentFX.classList.remove('hidden');
+          } else if (tabName === 'ai') {
+            el.tabBtnAI.className = activeClass;
+            el.tabContentAI.classList.remove('hidden');
+          }
+        }
+
+        el.tabBtnSlide.addEventListener('click', () => openTab('slide'));
+        el.tabBtnFX.addEventListener('click', () => openTab('fx'));
+        el.tabBtnAI.addEventListener('click', () => openTab('ai'));
+
+        el.btnToggleSidebar.addEventListener('click', () => {
+          el.sidebar.classList.toggle('translate-x-full');
+        });
+        el.btnCloseSidebar.addEventListener('click', () => {
+          el.sidebar.classList.add('translate-x-full');
+        });
+
+        // Keyboard Shortcuts
+        window.addEventListener('keydown', (e) => {
+          // If typing in input or textarea, ignore shortcuts
+          if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+
+          if (e.code === 'Space') {
+            e.preventDefault();
+            togglePlay();
+          } else if (e.key === 's' || e.key === 'S') {
+            e.preventDefault();
+            stopPlayback();
+          } else if (e.code === 'ArrowRight') {
+            e.preventDefault();
+            nextSlide();
+          } else if (e.code === 'ArrowLeft') {
+            e.preventDefault();
+            prevSlide();
+          } else if (e.key === 'f' || e.key === 'F') {
+            e.preventDefault();
+            toggleFullscreen();
+          } else if (e.key === 'Escape' && state.isTheaterMode) {
+            e.preventDefault();
+            exitTheaterMode();
+          } else if (e.key === 'm' || e.key === 'M') {
+            e.preventDefault();
+            el.btnToggleMute.click();
+          }
+        });
+
+        // ==========================================
+        // 12. BOOTSTRAP INITIALIZATION
+        // ==========================================
+        if (state.geminiKey) {
+          el.geminiApiKey.value = state.geminiKey;
+        }
+
+        // Initialize with high quality sample slides immediately
+        loadSampleSlides();
+        applyAspect(state.aspectRatio);
+        resizeCanvas();
+        requestAnimationFrame(mainLoop);
+        lucide.createIcons();
+      })();
+    </script>
+  </body>
+</html>
+
+
