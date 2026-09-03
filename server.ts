@@ -55,12 +55,16 @@ async function startServer() {
   // API 2: High-Fidelity Natural Flash TTS Narration
   app.post("/api/tts", async (req, res) => {
     try {
-      const { text, voice = "Aoede" } = req.body;
+      const { text, voice = "Aoede", apiKey } = req.body;
       if (!text || typeof text !== "string" || !text.trim()) {
         return res.status(400).json({ error: "Text is required" });
       }
 
-      const ai = getGenAI();
+      let ai = getGenAI();
+      if (apiKey && typeof apiKey === "string" && apiKey.trim()) {
+        ai = new GoogleGenAI({ apiKey: apiKey.trim() });
+      }
+
       if (!ai) {
         return res.status(503).json({
           error: "GEMINI_API_KEY is not configured",
@@ -118,8 +122,11 @@ async function startServer() {
   // API 3: Gemini Vision Scene Analysis & Script Writing
   app.post("/api/analyze", async (req, res) => {
     try {
-      const { imageBase64, mimeType = "image/jpeg" } = req.body;
-      const ai = getGenAI();
+      const { imageBase64, mimeType = "image/jpeg", apiKey } = req.body;
+      let ai = getGenAI();
+      if (apiKey && typeof apiKey === "string" && apiKey.trim()) {
+        ai = new GoogleGenAI({ apiKey: apiKey.trim() });
+      }
 
       if (!ai) {
         return res.status(503).json({ error: "GEMINI_API_KEY not configured" });

@@ -558,6 +558,16 @@
                     </select>
                   </div>
 
+                  <!-- Gemini API Key configuration for GitHub Pages / Static hosting -->
+                  <div class="pt-1.5 border-t border-amber-500/20 space-y-1">
+                    <div class="flex justify-between items-center">
+                      <label class="text-[9px] uppercase tracking-widest text-amber-300/80 font-medium">Gemini APIキー</label>
+                      <span id="badgeApiKeyStatus" class="text-[8px] font-mono">確認中...</span>
+                    </div>
+                    <input type="password" id="inputApiKeyMusicTab" class="w-full bg-[#141416] border border-white/15 rounded-sm px-2 py-1.5 text-[11px] text-white/90 focus:border-amber-500/50" placeholder="AI StudioのAPIキーを入力 (GitHub公開時に必須)">
+                    <p class="text-[8px] text-amber-200/60 leading-tight">※ GitHub Pagesなどの静的公開時でも、キー入力でブラウザから直接Flash TTS（24kHz）が利用可能です。</p>
+                  </div>
+
                   <button id="btnTestVoice" class="w-full py-1.5 px-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 rounded-sm text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition cursor-pointer font-medium">
                     <i data-lucide="volume-2" class="w-3 h-3"></i>
                     <span id="btnTestVoiceText">ナレーター音声を試聴</span>
@@ -903,7 +913,9 @@
           valVoiceRate: document.getElementById('valVoiceRate'),
           sliderVoicePitch: document.getElementById('sliderVoicePitch'),
           valVoicePitch: document.getElementById('valVoicePitch'),
-          geminiApiKey: document.getElementById('geminiApiKey')
+          geminiApiKey: document.getElementById('geminiApiKey'),
+          inputApiKeyMusicTab: document.getElementById('inputApiKeyMusicTab'),
+          badgeApiKeyStatus: document.getElementById('badgeApiKeyStatus')
         };
 
         // Active image buffer tracker (toggle between slideImgA and slideImgB)
@@ -1082,6 +1094,92 @@
           }
         }
 
+        function pcmToWavBlob(pcmDataArray, sampleRate = 24000, numChannels = 1) {
+          const dataSize = pcmDataArray.length;
+          const buffer = new ArrayBuffer(44 + dataSize);
+          const view = new DataView(buffer);
+
+          function writeString(offset, str) {
+            for (let i = 0; i < str.length; i++) {
+              view.setUint8(offset + i, str.charCodeAt(i));
+            }
+          }
+
+          writeString(0, 'RIFF');
+          view.setUint32(4, 36 + dataSize, true);
+          writeString(8, 'WAVE');
+          writeString(12, 'fmt ');
+          view.setUint32(16, 16, true);
+          view.setUint16(20, 1, true); // PCM format
+          view.setUint16(22, numChannels, true);
+          view.setUint32(24, sampleRate, true);
+          view.setUint32(28, sampleRate * numChannels * 2, true);
+          view.setUint16(32, numChannels * 2, true);
+          view.setUint16(34, 16, true); // 16-bit
+          writeString(36, 'data');
+          view.setUint32(40, dataSize, true);
+
+          const uint8 = new Uint8Array(buffer);
+          uint8.set(pcmDataArray, 44);
+          return new Blob([uint8], { type: 'audio/wav' });
+        }
+
+        function base64ToUint8(base64) {
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          return bytes;
+        }
+
+        async function requestGeminiTTSDirectly(cleanText, voice = 'Aoede', apiKey, signal = null) {
+          if (!apiKey) {
+            throw new Error('Gemini APIキーが未入力です');
+          }
+          const validVoices = ['Aoede', 'Charon', 'Fenrir', 'Kore', 'Puck'];
+          const selectedVoice = validVoices.includes(voice) ? voice : 'Aoede';
+          const prompt = `落ち着いた映画紀行ドキュメンタリーのプロの朗読者として、情感を込めて優しく自然に語りかけてください：\n${cleanText}`;
+
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                responseModalities: ['AUDIO'],
+                speechConfig: {
+                  voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName: selectedVoice }
+                  }
+                }
+              }
+            }),
+            signal: signal || undefined
+          });
+
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            const msg = errJson?.error?.message || `Google API error (HTTP ${res.status})`;
+            throw new Error(msg);
+          }
+
+          const data = await res.json();
+          const part = data.candidates?.[0]?.content?.parts?.[0];
+          if (!part || !part.inlineData || !part.inlineData.data) {
+            throw new Error('Gemini APIから音声データを受信できませんでした');
+          }
+
+          const rawBytes = base64ToUint8(part.inlineData.data);
+          let blob;
+          if (rawBytes.length >= 4 && rawBytes[0] === 0x52 && rawBytes[1] === 0x49 && rawBytes[2] === 0x46 && rawBytes[3] === 0x46) {
+            blob = new Blob([rawBytes], { type: 'audio/wav' });
+          } else {
+            blob = pcmToWavBlob(rawBytes, 24000, 1);
+          }
+          return URL.createObjectURL(blob);
+        }
+
         async function fetchGeminiTTS(text, voice = 'Aoede', signal = null) {
           const cleanText = text.trim();
           const cacheKey = `${voice}:${cleanText}`;
@@ -1089,22 +1187,47 @@
             return ttsAudioCache.get(cacheKey);
           }
 
-          const res = await fetch('/api/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: cleanText, voice }),
-            signal: signal || undefined
-          });
+          const apiKey = (state.geminiKey || (el.geminiApiKey ? el.geminiApiKey.value.trim() : '') || (el.inputApiKeyMusicTab ? el.inputApiKeyMusicTab.value.trim() : '')).trim();
 
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || `TTS request failed with status ${res.status}`);
+          // 1. First try server backend (/api/tts) if available
+          let serverFailed = false;
+          try {
+            const res = await fetch('/api/tts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: cleanText, voice, apiKey }),
+              signal: signal || undefined
+            });
+
+            if (res.ok) {
+              const blob = await res.blob();
+              const blobUrl = URL.createObjectURL(blob);
+              ttsAudioCache.set(cacheKey, blobUrl);
+              return blobUrl;
+            } else if (res.status === 404 || res.status === 503 || res.status === 500) {
+              // 404 on GitHub Pages or 503 missing server environment key
+              serverFailed = true;
+            } else {
+              const err = await res.json().catch(() => ({}));
+              throw new Error(err.error || `TTS request failed with status ${res.status}`);
+            }
+          } catch (e) {
+            if (signal && signal.aborted) throw e;
+            serverFailed = true;
           }
 
-          const blob = await res.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          ttsAudioCache.set(cacheKey, blobUrl);
-          return blobUrl;
+          // 2. Direct client-side Google API call (works everywhere including GitHub Pages & static hosting!)
+          if (serverFailed || !window.location.port) {
+            if (apiKey) {
+              const directBlobUrl = await requestGeminiTTSDirectly(cleanText, voice, apiKey, signal);
+              ttsAudioCache.set(cacheKey, directBlobUrl);
+              return directBlobUrl;
+            } else {
+              throw new Error('GitHub Pages等の静的公開時はGemini APIキーの入力が必要です');
+            }
+          }
+
+          throw new Error('TTS音声の生成に失敗しました');
         }
 
         function prefetchSlideTTS(index) {
@@ -2391,8 +2514,14 @@
             } catch (err) {
               if (myToken !== narrationEngine.token) return;
               narrationEngine.isLoading = false;
-              updateNarrationStatusBadge(false);
-              speakWebSpeech(text, myToken, state.currentIndex, true);
+              console.warn('Gemini Flash TTS test failed:', err);
+              const errMsg = err?.message || 'APIキーを確認してください';
+              updateNarrationStatusBadge(true, `⚠️ ${errMsg}`);
+              setTimeout(() => {
+                if (myToken === narrationEngine.token && !narrationEngine.isPlaying) {
+                  updateNarrationStatusBadge(false);
+                }
+              }, 4500);
             }
           } else {
             speakWebSpeech(text, myToken, state.currentIndex, true);
@@ -2607,8 +2736,48 @@
         // ==========================================
         // 12. BOOTSTRAP INITIALIZATION
         // ==========================================
+        function updateApiKeySync(val) {
+          const trimmed = (val || '').trim();
+          state.geminiKey = trimmed;
+          if (trimmed) {
+            localStorage.setItem('cinematic_gemini_key', trimmed);
+          } else {
+            localStorage.removeItem('cinematic_gemini_key');
+          }
+          if (el.geminiApiKey && el.geminiApiKey.value !== trimmed) {
+            el.geminiApiKey.value = trimmed;
+          }
+          if (el.inputApiKeyMusicTab && el.inputApiKeyMusicTab.value !== trimmed) {
+            el.inputApiKeyMusicTab.value = trimmed;
+          }
+          renderApiKeyBadge();
+          ttsAudioCache.clear();
+        }
+
+        function renderApiKeyBadge() {
+          if (!el.badgeApiKeyStatus) return;
+          const key = (state.geminiKey || '').trim();
+          if (key) {
+            el.badgeApiKeyStatus.innerHTML = '<span class="text-emerald-400 font-semibold flex items-center gap-1"><i data-lucide="check" class="w-2.5 h-2.5"></i>Flash TTS 有効</span>';
+          } else {
+            el.badgeApiKeyStatus.innerHTML = '<span class="text-amber-400/90 flex items-center gap-1"><i data-lucide="info" class="w-2.5 h-2.5"></i>GitHub公開時は入力必須</span>';
+          }
+          lucide.createIcons();
+        }
+
         if (state.geminiKey) {
-          el.geminiApiKey.value = state.geminiKey;
+          if (el.geminiApiKey) el.geminiApiKey.value = state.geminiKey;
+          if (el.inputApiKeyMusicTab) el.inputApiKeyMusicTab.value = state.geminiKey;
+        }
+        renderApiKeyBadge();
+
+        if (el.geminiApiKey) {
+          el.geminiApiKey.addEventListener('input', (e) => updateApiKeySync(e.target.value));
+          el.geminiApiKey.addEventListener('change', (e) => updateApiKeySync(e.target.value));
+        }
+        if (el.inputApiKeyMusicTab) {
+          el.inputApiKeyMusicTab.addEventListener('input', (e) => updateApiKeySync(e.target.value));
+          el.inputApiKeyMusicTab.addEventListener('change', (e) => updateApiKeySync(e.target.value));
         }
 
         // Initialize with high quality sample slides immediately
